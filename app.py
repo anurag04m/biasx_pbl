@@ -312,7 +312,20 @@ def main():
         for metric_key, metric_result in results['metrics'].items():
             metric_info = available_metrics[metric_key]
 
-            with st.expander(f"**{metric_info['name']}** - Value: {metric_result['value']:.4f}", expanded=True):
+            # Safe formatting for display and numeric fallback for charts
+            raw_val = metric_result.get('value', None)
+            try:
+                if isinstance(raw_val, (int, float)) and not (isinstance(raw_val, float) and np.isnan(raw_val)):
+                    display_value = f"{raw_val:.4f}"
+                    gauge_value = raw_val
+                else:
+                    display_value = "N/A"
+                    gauge_value = 0.0
+            except Exception:
+                display_value = "N/A"
+                gauge_value = 0.0
+
+            with st.expander(f"**{metric_info['name']}** - Value: {display_value}", expanded=True):
                 col1, col2 = st.columns([2, 1])
 
                 with col1:
@@ -321,23 +334,19 @@ def main():
                     st.markdown(f"**Ideal Value:** {metric_info['ideal_value']}")
 
                     # Interpretation with color coding
-                    if metric_result['is_fair']:
+                    if metric_result.get('is_fair'):
                         st.markdown(
-                            f'<div class="success-box" style="background-color:#bdecb8; color:#0b3d0b; border-left: 4px solid #28a745; padding:1rem; margin:1rem 0; border-radius:0.5rem;">✅ <strong>Fair:</strong> {metric_result["interpretation"]}</div>',
+                            f'<div class="success-box" style="background-color:#bdecb8; color:#0b3d0b; border-left: 4px solid #28a745; padding:1rem; margin:1rem 0; border-radius:0.5rem;">✅ <strong>Fair:</strong> {metric_result.get("interpretation", "")}</div>',
                             unsafe_allow_html=True)
                     else:
                         st.markdown(
-                            f'<div class="danger-box">⚠️ <strong>Biased:</strong> {metric_result["interpretation"]}</div>',
+                            f'<div class="danger-box">⚠️ <strong>Biased:</strong> {metric_result.get("interpretation", "")}</div>',
                             unsafe_allow_html=True)
 
                 with col2:
-                    # Create gauge chart
-                    fig = create_gauge_chart(
-                        metric_result['value'],
-                        metric_info['name'],
-                        metric_key
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    # Create gauge chart using the safe numeric value
+                    fig = create_gauge_chart(gauge_value, metric_info['name'], metric_key)
+                    plot_chart(fig, use_container_width=True)
 
         st.markdown("---")
 
@@ -386,7 +395,6 @@ def main():
                 mime="application/json"
             )
 
-
 def create_gauge_chart(value, title, metric_key):
     """Create a gauge chart for metric visualization"""
     # Determine range and thresholds based on metric
@@ -414,7 +422,6 @@ def create_gauge_chart(value, title, metric_key):
         ))
     else:
         # Difference metrics: ideal around 0
-        abs_value = abs(value)
         fig = go.Figure(go.Indicator(
             mode="gauge+number+delta",
             value=value,
@@ -441,6 +448,59 @@ def create_gauge_chart(value, title, metric_key):
     return fig
 
 
+def plot_chart(fig, use_container_width=True):
+    """
+    Wrapper around st.plotly_chart:
+    - use_container_width=True  -> width='stretch'
+    - use_container_width=False -> width='content'
+    Falls back to boolean `use_container_width` for older Streamlit versions.
+    """
+    width = 'stretch' if use_container_width else 'content'
+    try:
+        st.plotly_chart(fig, width=width)
+    except TypeError:
+        # Fallback for Streamlit versions that expect use_container_width boolean
+        st.plotly_chart(fig, use_container_width=(width == 'stretch'))
+
+
+def create_metric_comparison_chart(results, available_metrics):
+    """Create metric comparison visualization (handles missing values)"""
+    metric_names = []
+    metric_values = []
+    colors = []
+
+    for metric_key, metric_result in results['metrics'].items():
+        metric_names.append(available_metrics[metric_key]['name'])
+        val = metric_result.get('value', None)
+        if isinstance(val, (int, float)) and not (isinstance(val, float) and np.isnan(val)):
+            metric_values.append(abs(val))
+            colors.append('green' if metric_result.get('is_fair') else 'red')
+        else:
+            # Show missing values as zero length and gray color
+            metric_values.append(0.0)
+            colors.append('gray')
+
+    fig = go.Figure(go.Bar(
+        x=metric_values,
+        y=metric_names,
+        orientation='h',
+        marker=dict(color=colors),
+        text=[(f"{v:.4f}" if v != 0 else "N/A") for v in metric_values],
+        textposition='auto'
+    ))
+
+    fig.update_layout(
+        title="Metric Values Comparison (Absolute)",
+        xaxis_title="Absolute Metric Value",
+        yaxis_title="Metric",
+        height=max(400, len(metric_names) * 50)
+    )
+
+    return fig
+
+
+
+
 def create_group_distribution_chart(results):
     """Create group distribution visualization"""
     fig = go.Figure()
@@ -463,34 +523,6 @@ def create_group_distribution_chart(results):
     return fig
 
 
-def create_metric_comparison_chart(results, available_metrics):
-    """Create metric comparison visualization"""
-    metric_names = []
-    metric_values = []
-    colors = []
-
-    for metric_key, metric_result in results['metrics'].items():
-        metric_names.append(available_metrics[metric_key]['name'])
-        metric_values.append(abs(metric_result['value']))
-        colors.append('green' if metric_result['is_fair'] else 'red')
-
-    fig = go.Figure(go.Bar(
-        x=metric_values,
-        y=metric_names,
-        orientation='h',
-        marker=dict(color=colors),
-        text=[f"{v:.4f}" for v in metric_values],
-        textposition='auto'
-    ))
-
-    fig.update_layout(
-        title="Metric Values Comparison (Absolute)",
-        xaxis_title="Absolute Metric Value",
-        yaxis_title="Metric",
-        height=max(400, len(metric_names) * 50)
-    )
-
-    return fig
 
 
 def create_fairness_dashboard(results, available_metrics):
