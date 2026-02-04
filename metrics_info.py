@@ -131,6 +131,35 @@ CLASSIFICATION_METRICS = {
         'interpretation': 'Lower values indicate more fairness. Higher values indicate greater inequality in benefit allocation.',
         'threshold': {'min': 0, 'max': 0.1},
         'type': 'classification'
+    },
+
+    # New metrics added below
+    'predictive_parity_difference': {
+        'name': 'Predictive Parity Difference',
+        'description': 'Difference in Positive Predictive Value (precision) between unprivileged and privileged groups.',
+        'formula': 'PPV_unprivileged - PPV_privileged',
+        'ideal_value': '0 (equal PPV)',
+        'interpretation': 'A value close to 0 indicates predictive parity. Negative values indicate unprivileged group has lower precision.',
+        'threshold': {'min': -0.1, 'max': 0.1},
+        'type': 'classification'
+    },
+    'selection_rate_difference': {
+        'name': 'Selection Rate Difference (Predictions)',
+        'description': 'Difference in predicted positive (selection) rates between groups (prediction-level statistical parity).',
+        'formula': 'P(Ŷ=1|D=unprivileged) - P(Ŷ=1|D=privileged)',
+        'ideal_value': '0 (no difference)',
+        'interpretation': 'A value close to 0 indicates similar selection rates in predictions between groups.',
+        'threshold': {'min': -0.1, 'max': 0.1},
+        'type': 'classification'
+    },
+    'balanced_accuracy_difference': {
+        'name': 'Balanced Accuracy Difference',
+        'description': 'Difference in balanced accuracy (0.5*(TPR+TNR)) between unprivileged and privileged groups.',
+        'formula': 'BalancedAcc_unprivileged - BalancedAcc_privileged',
+        'ideal_value': '0 (equal balanced accuracy)',
+        'interpretation': 'A value close to 0 indicates similar balanced accuracy across groups. Large deviations suggest fairness issues in sensitivity/specificity balance.',
+        'threshold': {'min': -0.1, 'max': 0.1},
+        'type': 'classification'
     }
 }
 

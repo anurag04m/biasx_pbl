@@ -299,7 +299,18 @@ class BiasDetector:
         
         elif metric_key == 'theil_index':
             return self._theil_index()
-        
+
+        # New classification metrics
+        elif metric_key == 'predictive_parity_difference':
+            return self._predictive_parity_difference()
+
+        elif metric_key == 'selection_rate_difference':
+            # selection rate difference == statistical parity difference on predictions
+            return self._statistical_parity_difference(use_predictions=True)
+
+        elif metric_key == 'balanced_accuracy_difference':
+            return self._balanced_accuracy_difference()
+
         else:
             raise ValueError(f"Unknown classification metric: {metric_key}")
     
@@ -561,7 +572,49 @@ class BiasDetector:
         theil = np.mean((benefits_safe / mu) * np.log(benefits_safe / mu))
         
         return theil
-    
+
+    # New classification metric implementations
+    def _predictive_parity_difference(self) -> float:
+        """Predictive Parity Difference: difference in Positive Predictive Value (PPV) between groups."""
+        priv_rates = self._confusion_matrix_rates(self.privileged_df, self.privileged_pred_df)
+        unpriv_rates = self._confusion_matrix_rates(self.unprivileged_df, self.unprivileged_pred_df)
+
+        if priv_rates is None or unpriv_rates is None:
+            return float('nan')
+
+        ppv_priv = priv_rates.get('ppv', np.nan)
+        ppv_unpriv = unpriv_rates.get('ppv', np.nan)
+
+        if np.isnan(ppv_priv) or np.isnan(ppv_unpriv):
+            return float('nan')
+
+        return ppv_unpriv - ppv_priv
+
+    def _selection_rate_difference(self) -> float:
+        """Selection Rate Difference for predictions (same as statistical parity on predictions)."""
+        return self._statistical_parity_difference(use_predictions=True)
+
+    def _balanced_accuracy_difference(self) -> float:
+        """Balanced Accuracy Difference: (0.5*(TPR+TNR))_unpriv - (0.5*(TPR+TNR))_priv"""
+        priv_rates = self._confusion_matrix_rates(self.privileged_df, self.privileged_pred_df)
+        unpriv_rates = self._confusion_matrix_rates(self.unprivileged_df, self.unprivileged_pred_df)
+
+        if priv_rates is None or unpriv_rates is None:
+            return float('nan')
+
+        tpr_priv = priv_rates.get('tpr', np.nan)
+        tnr_priv = priv_rates.get('tnr', np.nan)
+        tpr_unpriv = unpriv_rates.get('tpr', np.nan)
+        tnr_unpriv = unpriv_rates.get('tnr', np.nan)
+
+        if np.isnan(tpr_priv) or np.isnan(tnr_priv) or np.isnan(tpr_unpriv) or np.isnan(tnr_unpriv):
+            return float('nan')
+
+        bal_priv = 0.5 * (tpr_priv + tnr_priv)
+        bal_unpriv = 0.5 * (tpr_unpriv + tnr_unpriv)
+
+        return bal_unpriv - bal_priv
+
     def _interpret_metric(self, metric_key: str, value: float) -> tuple:
         """
         Interpret metric value to determine if it indicates bias
