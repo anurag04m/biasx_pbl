@@ -274,6 +274,8 @@ def main():
                 # Calculate metrics
                 results = detector.calculate_metrics(selected_metrics)
                 st.session_state.results = results
+                # Store detector so we can run mitigation later
+                st.session_state.detector = detector
                 st.session_state.report_generated = True
 
             except Exception as e:
@@ -394,6 +396,163 @@ def main():
                 file_name=f"bias_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json"
             )
+
+        st.markdown("---")
+
+        # Mitigation Section
+        st.header("🛠️ Mitigation Options")
+
+        detector = st.session_state.get('detector')
+        if detector is None:
+            st.info("Mitigation tools will be available after detection runs successfully.")
+        else:
+            # Determine which metrics are flagged as biased
+            biased = {k: v for k, v in results['metrics'].items() if v.get('is_fair') is False}
+
+            if len(biased) == 0:
+                st.success("No significant bias detected across selected metrics — mitigation not required.")
+            else:
+                st.warning(f"{len(biased)} metric(s) flagged as biased. Suggested mitigations are provided below.")
+
+                # Simple heuristic to recommend mitigation strength
+                severity_levels = []
+                for k, v in biased.items():
+                    val = v.get('value')
+                    try:
+                        if val is None or (isinstance(val, float) and np.isnan(val)):
+                            sev = 0
+                        else:
+                            # treat disparate impact style ratios separately
+                            if k in ('disparate_impact', 'positive_rate_ratio'):
+                                dev = abs(float(val) - 1.0)
+                                if dev > 0.25:
+                                    sev = 3
+                                elif dev > 0.1:
+                                    sev = 2
+                                else:
+                                    sev = 1
+                            else:
+                                # difference metrics: compare to threshold width
+                                info = available_metrics.get(k, {})
+                                thr = info.get('threshold', {})
+                                max_thr = thr.get('max', 0.1)
+                                min_thr = thr.get('min', -0.1)
+                                # use distance from nearest bound
+                                if val < min_thr:
+                                    diff = abs(min_thr - float(val))
+                                elif val > max_thr:
+                                    diff = abs(float(val) - max_thr)
+                                else:
+                                    diff = 0
+                                span = abs(max_thr - min_thr) if (max_thr - min_thr) != 0 else 0.1
+                                if diff > 2 * span:
+                                    sev = 3
+                                elif diff > span:
+                                    sev = 2
+                                else:
+                                    sev = 1
+                    except Exception:
+                        sev = 1
+                    severity_levels.append(sev)
+
+                overall_severity = max(severity_levels) if severity_levels else 0
+
+                # Recommendation logic
+                if overall_severity >= 3:
+                    recommendation = "High bias detected — recommend trying all mitigation methods (Reweighing, Disparate Impact Remover, Optimized Preprocessing) and evaluating their effects."
+                    suggested_methods = ['reweighing', 'disparate_impact_remover', 'optimized_preprocessing']
+                elif overall_severity == 2:
+                    recommendation = "Moderate bias detected — recommend Disparate Impact Remover and Reweighing as first steps."
+                    suggested_methods = ['disparate_impact_remover', 'reweighing']
+                else:
+                    recommendation = "Minor bias detected — recommend Reweighing (low-cost) first."
+                    suggested_methods = ['reweighing']
+
+                st.markdown(f"**Recommendation:** {recommendation}")
+
+                # Present mitigation selection UI
+                col_a, col_b = st.columns([2, 1])
+                with col_a:
+                    method = st.selectbox(
+                        "Select Dataset Mitigation Method",
+                        options=['reweighing', 'disparate_impact_remover', 'optimized_preprocessing'],
+                        format_func=lambda x: x.replace('_', ' ').title(),
+                        index=0 if suggested_methods[0] == 'reweighing' else (1 if suggested_methods[0]=='disparate_impact_remover' else 2)
+                    )
+
+                    # Additional params for methods
+                    repair_level = None
+                    if method == 'disparate_impact_remover':
+                        repair_level = st.slider("Repair Level", 0.0, 1.0, 1.0, 0.01,
+                                                 help="0 = no repair, 1 = full repair")
+
+                    if method == 'optimized_preprocessing':
+                        st.info('Optimized Preprocessing can be slow. Only use on small-medium datasets or in experiments.')
+
+                with col_b:
+                    st.markdown("**Model Mitigation**")
+                    st.markdown("(Placeholder) You can apply post-processing model-level mitigation techniques in your training pipeline.")
+                    if st.button("🧩 Apply Model Mitigation (placeholder)"):
+                        st.info("Model mitigation UI placeholder created. Backend implementation is not included.")
+
+                # Apply dataset mitigation
+                if st.button("▶️ Apply Dataset Mitigation"):
+                    try:
+                        kwargs = {}
+                        if repair_level is not None:
+                            kwargs['repair_level'] = repair_level
+
+                        with st.spinner("Applying mitigation — this may take a moment..."):
+                            mitigated_df = detector.mitigate_dataset(method, **kwargs)
+
+                        # Save mitigated_df in session for later use
+                        st.session_state.mitigated_df = mitigated_df
+
+                        st.success("Mitigation applied successfully. Preview and download below.")
+
+                        with st.expander("📋 Mitigated Dataset Preview", expanded=True):
+                            st.dataframe(mitigated_df.head(10))
+                            st.write(f"**Shape:** {mitigated_df.shape}")
+
+                        # Offer download
+                        csv = mitigated_df.to_csv(index=False)
+                        st.download_button(label="⬇️ Download Mitigated Dataset (CSV)", data=csv,
+                                           file_name=f"mitigated_dataset_{method}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                           mime='text/csv')
+
+                        # Option to re-run metrics on mitigated dataset
+                        if st.button("🔁 Re-run Bias Analysis on Mitigated Dataset"):
+                            with st.spinner("Re-calculating metrics on mitigated dataset..."):
+                                new_detector = BiasDetector(
+                                    dataset=mitigated_df,
+                                    protected_attr=st.session_state.config['protected_attr'],
+                                    label_column=st.session_state.config['label_column'],
+                                    privileged_value=st.session_state.config['privileged_value'],
+                                    unprivileged_value=st.session_state.config['unprivileged_value'],
+                                    detection_type='Dataset Bias Detection'
+                                )
+                                # Use the same metrics originally selected (or all dataset metrics)
+                                metric_keys = list(results['metrics'].keys())
+                                new_results = new_detector.calculate_metrics(metric_keys)
+                                st.session_state.mitigated_results = new_results
+
+                            st.success("Re-analysis complete. See comparison below.")
+
+                            # Show quick comparison table
+                            comp_rows = []
+                            for mk in metric_keys:
+                                orig = results['metrics'].get(mk, {}).get('value')
+                                new = new_results['metrics'].get(mk, {}).get('value')
+                                comp_rows.append({'metric': available_metrics[mk]['name'], 'original': orig, 'mitigated': new})
+
+                            comp_df = pd.DataFrame(comp_rows)
+                            with st.expander("📊 Mitigation Comparison", expanded=True):
+                                st.dataframe(comp_df)
+
+                    except Exception as e:
+                        st.error(f"Mitigation failed: {str(e)}")
+                        st.exception(e)
+
 
 def create_gauge_chart(value, title, metric_key):
     """Create a gauge chart for metric visualization"""
