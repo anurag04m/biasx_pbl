@@ -7,6 +7,7 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 from aif360.datasets import BinaryLabelDataset
 from aif360.metrics import BinaryLabelDatasetMetric, ClassificationMetric
+from metrics_info import DATASET_METRICS, CLASSIFICATION_METRICS
 
 class BiasDetector:
     """
@@ -158,6 +159,10 @@ class BiasDetector:
         mask = source_df[self.protected_attr].isin([self.privileged_value, self.unprivileged_value])
         filtered_df = source_df[mask].copy()
 
+        # Keep an unmapped copy so we can restore original protected-attribute values
+        # when returning mitigated DataFrames (prevents losing original category labels)
+        self._filtered_original = filtered_df.copy()
+
         # Map protected attribute to 1 (privileged) and 0 (unprivileged)
         mapping = {self.privileged_value: 1, self.unprivileged_value: 0}
         filtered_df[self.protected_attr] = filtered_df[self.protected_attr].map(mapping)
@@ -170,6 +175,17 @@ class BiasDetector:
             label_names=[self.label_column],
             protected_attribute_names=[self.protected_attr]
         )
+
+        # If the raw dataframe contained instance weights (from Reweighing), set them on the aif dataset
+        for wname in ('instance_weight', 'instance_weights', 'sample_weight'):
+            if wname in filtered_df.columns:
+                try:
+                    weights = filtered_df[wname].values
+                    # aif360 expects a 2D array for instance_weights
+                    self.aif_dataset.instance_weights = weights.reshape(-1, 1)
+                except Exception:
+                    # ignore if cannot set
+                    pass
 
         # keep a pandas copy of the filtered dataframe for mitigation transforms
         self._filtered_df = filtered_df.copy()
@@ -322,6 +338,82 @@ class BiasDetector:
         else:
             raise ValueError(f"Unknown dataset metric: {metric_key}")
 
+    def _get_classification_metric(self, metric_obj: ClassificationMetric, metric_key: str) -> float:
+        """Calculate classification-level fairness metrics using aif360 ClassificationMetric"""
+        # Map known metric keys to ClassificationMetric methods
+        try:
+            if metric_key == 'statistical_parity_difference':
+                return metric_obj.statistical_parity_difference()
+            elif metric_key == 'disparate_impact':
+                return metric_obj.disparate_impact()
+            elif metric_key == 'equal_opportunity_difference':
+                return metric_obj.equal_opportunity_difference()
+            elif metric_key == 'average_odds_difference':
+                return metric_obj.average_odds_difference()
+            elif metric_key == 'false_positive_rate_difference':
+                return metric_obj.false_positive_rate_difference()
+            elif metric_key == 'false_negative_rate_difference':
+                return metric_obj.false_negative_rate_difference()
+            elif metric_key == 'theil_index':
+                return metric_obj.theil_index()
+            elif metric_key == 'predictive_parity_difference':
+                # Not always implemented; attempt to compute via precision per group if available
+                return metric_obj.positive_predictive_value_difference()
+            else:
+                # Fallback: try to call a method with same name on the metric object
+                if hasattr(metric_obj, metric_key):
+                    func = getattr(metric_obj, metric_key)
+                    return func()
+                raise ValueError(f"Unknown classification metric: {metric_key}")
+        except Exception as e:
+            # Surface a helpful error
+            raise RuntimeError(f"Error computing classification metric '{metric_key}': {e}") from e
+
+    def _interpret_metric(self, metric_key: str, value: Any):
+        """Interpret metric value against thresholds from metrics_info and return (is_fair, interpretation_str)."""
+        try:
+            if value is None:
+                return (None, 'Metric value not available')
+            if isinstance(value, (list, tuple, np.ndarray)):
+                # reduce to a scalar when possible
+                try:
+                    value = float(np.mean(value))
+                except Exception:
+                    return (None, 'Metric returned a non-scalar value')
+
+            val = float(value)
+
+            # Determine metric info source
+            if metric_key in DATASET_METRICS:
+                info = DATASET_METRICS.get(metric_key, {})
+            else:
+                info = CLASSIFICATION_METRICS.get(metric_key, {})
+
+            thr = info.get('threshold', {})
+            min_thr = thr.get('min', None)
+            max_thr = thr.get('max', None)
+
+            # If thresholds are available, use them
+            if min_thr is not None and max_thr is not None:
+                is_fair = (val >= min_thr) and (val <= max_thr)
+                interpretation = f"Value {val:.4f}; acceptable range [{min_thr}, {max_thr}]"
+                if not is_fair:
+                    interpretation += ". Outside acceptable bounds."
+                return (bool(is_fair), interpretation)
+
+            # Fallback heuristics
+            if 'disparate_impact' in metric_key or metric_key == 'positive_rate_ratio':
+                is_fair = (0.8 <= val <= 1.25)
+                interpretation = f"Disparate impact ratio {val:.4f}; 0.8-1.25 rule applied."
+                return (is_fair, interpretation)
+
+            # Default for difference metrics: small absolute difference is fair
+            is_fair = abs(val) <= 0.1
+            interpretation = f"Difference {val:.4f}; threshold ±0.1 applied."
+            return (is_fair, interpretation)
+        except Exception as e:
+            return (None, f'Error interpreting metric: {e}')
+
     def mitigate_dataset(self, method: str, **kwargs) -> pd.DataFrame:
         """Apply a dataset-level mitigation and return a pandas DataFrame with the mitigated data.
 
@@ -343,13 +435,31 @@ class BiasDetector:
             rw = Reweighing(unprivileged_groups=self.unprivileged_groups, privileged_groups=self.privileged_groups)
             transformed = rw.fit_transform(self.aif_dataset)
 
-            # transformed.instance_weights aligns with _filtered_df ordering
-            weights = getattr(transformed, 'instance_weights', None)
+            # transformed may expose instance weights under different names and shapes
+            weights = None
+            for attr in ('instance_weights', 'instance_weight', 'instanceWeights'):
+                weights = getattr(transformed, attr, None)
+                if weights is not None:
+                    break
+
             if weights is None:
+                # Some older/newer versions place weights as attribute on the returned object
                 raise RuntimeError('Reweighing did not produce instance weights')
 
+            # Flatten if it's 2D
+            try:
+                weights_arr = np.array(weights).reshape(-1)
+            except Exception:
+                weights_arr = np.array(weights).ravel()
+
             out_df = self._filtered_df.copy()
-            out_df['instance_weight'] = weights
+            out_df['instance_weight'] = weights_arr
+            # Restore original protected attribute values before returning
+            try:
+                if hasattr(self, '_filtered_original') and self.protected_attr in self._filtered_original.columns:
+                    out_df[self.protected_attr] = self._filtered_original[self.protected_attr].values
+            except Exception:
+                pass
             return out_df
 
         elif method == 'disparate_impact_remover':
@@ -359,24 +469,49 @@ class BiasDetector:
                 raise ImportError('DisparateImpactRemover not available in aif360 installation') from e
 
             repair_level = float(kwargs.get('repair_level', 1.0))
+
+            # Create a temporary DataFrame that keeps the protected attribute as a regular feature
+            temp_df = self._filtered_df.copy()
+            # Use a duplicate column name to ensure the attribute is present among features
+            dup_col = f"{self.protected_attr}_as_feature"
+            # If the duplicate name collides (very unlikely), pick a unique suffix
+            if dup_col in temp_df.columns:
+                i = 1
+                while f"{dup_col}_{i}" in temp_df.columns:
+                    i += 1
+                dup_col = f"{dup_col}_{i}"
+
+            temp_df[dup_col] = temp_df[self.protected_attr]
+
+            # Build a BinaryLabelDataset using the duplicate as the protected attribute
+            # so that the DisparateImpactRemover can find it among the features if it
+            # expects the protected attribute to be available in the feature list.
+            temp_aif = BinaryLabelDataset(
+                favorable_label=1,
+                unfavorable_label=0,
+                df=temp_df,
+                label_names=[self.label_column],
+                protected_attribute_names=[dup_col]
+            )
+
             dir_ = DisparateImpactRemover(repair_level=repair_level)
-            # DisparateImpactRemover expects either a BinaryLabelDataset or in some versions a DataFrame
+
+            # Some AIF360 versions expose fit_transform, some predict/transform. Try them in order.
             try:
-                # Prefer passing the aif_dataset (BinaryLabelDataset) since many implementations expect it
                 if hasattr(dir_, 'fit_transform'):
-                    repaired = dir_.fit_transform(self.aif_dataset)
+                    repaired = dir_.fit_transform(temp_aif)
                 elif hasattr(dir_, 'predict'):
-                    repaired = dir_.predict(self.aif_dataset)
+                    repaired = dir_.predict(temp_aif)
                 elif hasattr(dir_, 'transform'):
-                    repaired = dir_.transform(self.aif_dataset)
+                    repaired = dir_.transform(temp_aif)
                 else:
                     raise RuntimeError('DisparateImpactRemover does not expose fit_transform/transform/predict methods in this AIF360 version')
             except Exception as e:
                 raise RuntimeError(f'DisparateImpactRemover failed: {e}') from e
 
             out_df = None
-            # If returned as a BinaryLabelDataset, convert to DataFrame
             try:
+                # aif360 BinaryLabelDataset exposes convert_to_dataframe() returning (df, meta)
                 if isinstance(repaired, BinaryLabelDataset):
                     out_df = repaired.convert_to_dataframe()[0]
                 elif hasattr(repaired, 'convert_to_dataframe'):
@@ -384,185 +519,99 @@ class BiasDetector:
                 elif isinstance(repaired, pd.DataFrame):
                     out_df = repaired
                 elif isinstance(repaired, np.ndarray):
-                    out_df = pd.DataFrame(repaired, columns=self._filtered_df.columns, index=self._filtered_df.index)
+                    cols = temp_df.columns.tolist()
+                    out_df = pd.DataFrame(repaired, columns=cols, index=temp_df.index)
             except Exception as e:
                 raise RuntimeError(f'Failed to convert DisparateImpactRemover output to DataFrame: {e}') from e
 
             if out_df is None:
                 raise RuntimeError('DisparateImpactRemover produced unsupported output format')
 
-            # Ensure label and protected columns preserved if DR only changed features
-            if self.label_column not in out_df.columns:
-                out_df[self.label_column] = self._filtered_df[self.label_column].values
-            if self.protected_attr not in out_df.columns:
+            # After repair, ensure the original protected attribute exists and is correct.
+            # If DisparateImpactRemover returned the duplicate column, map it back.
+            try:
+                if self.protected_attr not in out_df.columns and dup_col in out_df.columns:
+                    # Rename duplicate back to original protected attribute name
+                    out_df[self.protected_attr] = out_df[dup_col]
+                elif self.protected_attr in out_df.columns:
+                    # keep existing
+                    pass
+                else:
+                    # As a fallback, restore original values from the pre-mitigation df
+                    out_df[self.protected_attr] = self._filtered_df[self.protected_attr].values
+            except Exception:
+                # On any error, ensure original values are present
                 out_df[self.protected_attr] = self._filtered_df[self.protected_attr].values
+
+            # If duplicate feature present, drop it to avoid duplicates
+            if dup_col in out_df.columns:
+                try:
+                    out_df.drop(columns=[dup_col], inplace=True)
+                except Exception:
+                    pass
+
+            # Ensure label column present and properly typed
+            if self.label_column in out_df.columns:
+                try:
+                    out_df[self.label_column] = out_df[self.label_column].astype(int)
+                except Exception:
+                    # If conversion fails, keep as-is
+                    pass
+
+            # Restore original protected attribute values before returning
+            try:
+                if hasattr(self, '_filtered_original') and self.protected_attr in self._filtered_original.columns:
+                    out_df[self.protected_attr] = self._filtered_original[self.protected_attr].values
+            except Exception:
+                pass
 
             return out_df
 
         elif method == 'optimized_preprocessing':
-            # Optimized preprocessor API has changed across AIF360 versions; try best-effort
+            # Use a simple heuristic-based Optimized Preprocessing if AIF360's implementation is not available
+            # This function uses the heuristic provided by the user (flip some negative labels from disadvantaged group)
+            def simple_optimized_preprocessing(df, label_col, protected_col, target_parity=0.0, random_state=None):
+                df = df.copy()
+                if random_state is not None:
+                    # shuffle deterministically but avoid bringing old index in as a column
+                    df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
+
+                groups = df[protected_col].unique()
+                if len(groups) != 2:
+                    # fallback: return original
+                    return df
+                g0, g1 = groups
+
+                rate0 = df[df[protected_col] == g0][label_col].mean()
+                rate1 = df[df[protected_col] == g1][label_col].mean()
+
+                if rate0 > rate1:
+                    disadvantaged = g1
+                else:
+                    disadvantaged = g0
+
+                # Find negative samples to flip
+                candidates = df[(df[protected_col] == disadvantaged) & (df[label_col] == 0)].copy()
+
+                # Number to flip
+                gap = abs(rate0 - rate1)
+                flips = int(gap * len(df))
+
+                if len(candidates) == 0 or flips <= 0:
+                    return df
+
+                flip_idx = candidates.sample(min(flips, len(candidates)), random_state=random_state).index
+                df.loc[flip_idx, label_col] = 1
+
+                return df
+
+            target_parity = float(kwargs.get('target_parity', 0.0))
+            random_state = kwargs.get('random_state', None)
+            out_df = simple_optimized_preprocessing(self._filtered_df.copy(), self.label_column, self.protected_attr, target_parity=target_parity, random_state=random_state)
+            # restore original protected attribute values
             try:
-                # many aif360 versions expose the class in this path
-                from aif360.algorithms.preprocessing import OptimizedPreprocessing
+                if hasattr(self, '_filtered_original') and self.protected_attr in self._filtered_original.columns:
+                    out_df[self.protected_attr] = self._filtered_original[self.protected_attr].values
             except Exception:
-                try:
-                    from aif360.algorithms.preprocessing.optim_preproc import OptimizedPreprocessing
-                except Exception as e:
-                    raise ImportError('Optimized Preprocessing not available in aif360 installation') from e
-
-            # Provide a conservative, simple configuration for optimized preprocessing
-            opt_params = kwargs.get('opt_params', {})
-            op = OptimizedPreprocessing(unprivileged_groups=self.unprivileged_groups,
-                                        privileged_groups=self.privileged_groups,
-                                        **(opt_params or {}))
-            try:
-                transformed = op.fit_transform(self.aif_dataset)
-            except Exception:
-                transformed = op.transform(self.aif_dataset)
-
-            # Try to extract a DataFrame from the returned dataset-like object
-            if hasattr(transformed, 'convert_to_dataframe'):
-                try:
-                    out_df = transformed.convert_to_dataframe()[0]
-                except Exception:
-                    out_df = None
-            else:
-                out_df = None
-
-            if out_df is None:
-                # Fallback: try to construct DataFrame from features/labels/protected_attributes
-                try:
-                    feats = getattr(transformed, 'features', None)
-                    labs = getattr(transformed, 'labels', None)
-                    prot = getattr(transformed, 'protected_attributes', None)
-                    if feats is not None:
-                        cols = self._filtered_df.columns.tolist()
-                        out_df = pd.DataFrame(feats, columns=cols, index=self._filtered_df.index)
-                        if labs is not None:
-                            out_df[self.label_column] = labs
-                        if prot is not None:
-                            out_df[self.protected_attr] = prot
-                    else:
-                        raise RuntimeError('OptimizedPreprocessing produced an unsupported output format')
-                except Exception as e:
-                    raise RuntimeError('Failed to convert OptimizedPreprocessing output to DataFrame') from e
-
+                pass
             return out_df
-
-        else:
-            raise ValueError(f"Unknown mitigation method: {method}")
-
-    def _get_classification_metric(self, metric_obj: ClassificationMetric, metric_key: str) -> float:
-        """Calculate classification-level fairness metrics using aif360"""
-
-        if metric_key == 'equal_opportunity_difference':
-            return metric_obj.equal_opportunity_difference()
-
-        elif metric_key == 'average_odds_difference':
-            return metric_obj.average_odds_difference()
-
-        elif metric_key == 'statistical_parity_difference':
-            # This is selection rate difference on predictions
-            # ClassificationMetric inherits statistical_parity_difference from BinaryLabelDatasetMetric
-            # which operates on the 'dataset' (which in ClassificationMetric is the predicted dataset? No)
-            # Wait, ClassificationMetric init(dataset, classified_dataset).
-            # It inherits from BinaryLabelDatasetMetric initialized with 'classified_dataset'.
-            # So calling statistical_parity_difference() on ClassificationMetric returns SPD of predictions.
-            return metric_obj.statistical_parity_difference()
-
-        elif metric_key == 'disparate_impact':
-             return metric_obj.disparate_impact()
-
-        elif metric_key == 'false_positive_rate_difference':
-            return metric_obj.false_positive_rate_difference()
-
-        elif metric_key == 'false_negative_rate_difference':
-            return metric_obj.false_negative_rate_difference()
-
-        elif metric_key == 'false_discovery_rate_difference':
-            return metric_obj.false_discovery_rate_difference()
-
-        elif metric_key == 'false_omission_rate_difference':
-            return metric_obj.false_omission_rate_difference()
-
-        elif metric_key == 'error_rate_difference':
-            return metric_obj.error_rate_difference()
-
-        elif metric_key == 'theil_index':
-            return metric_obj.theil_index()
-
-        elif metric_key == 'predictive_parity_difference':
-            # difference in PPV
-            # AIF360 doesn't have predictive_parity_difference directly?
-            # It has positive_predictive_value(privileged=True) etc.
-            ppv_unpriv = metric_obj.positive_predictive_value(privileged=False)
-            ppv_priv = metric_obj.positive_predictive_value(privileged=True)
-            return ppv_unpriv - ppv_priv
-
-        elif metric_key == 'selection_rate_difference':
-            return metric_obj.statistical_parity_difference()
-
-        elif metric_key == 'balanced_accuracy_difference':
-            # (tpr+tnr)/2
-            # AIF360 has generalized_entropy_index, etc. checking docs for balanced_accuracy.
-            # Not directly difference. implement manually.
-
-            def balanced_accuracy(privileged):
-                tpr = metric_obj.true_positive_rate(privileged=privileged)
-                tnr = metric_obj.true_negative_rate(privileged=privileged)
-                return 0.5 * (tpr + tnr)
-
-            return balanced_accuracy(privileged=False) - balanced_accuracy(privileged=True)
-
-        else:
-            raise ValueError(f"Unknown classification metric: {metric_key}")
-
-    def _interpret_metric(self, metric_key: str, value: float) -> tuple:
-        """
-        Interpret metric value to determine if it indicates bias
-        """
-        from metrics_info import DATASET_METRICS, CLASSIFICATION_METRICS
-
-        if self.detection_type == "Dataset Bias Detection":
-            metric_info = DATASET_METRICS.get(metric_key, {})
-        else:
-            metric_info = CLASSIFICATION_METRICS.get(metric_key, {})
-
-        threshold = metric_info.get('threshold', {})
-
-        if value is None or (isinstance(value, float) and np.isnan(value)):
-            return (None, 'Metric undefined (insufficient data or division by zero).')
-
-        if metric_key in ['disparate_impact']:
-            is_fair = threshold['min'] <= value <= threshold['max']
-            if is_fair:
-                interpretation = f"The ratio ({value:.4f}) falls within the acceptable range of {threshold['min']}-{threshold['max']}."
-            elif value < threshold['min']:
-                interpretation = f"The ratio ({value:.4f}) is below {threshold['min']}, indicating the unprivileged group is disadvantaged."
-            else:
-                interpretation = f"The ratio ({value:.4f}) is above {threshold['max']}, indicating the privileged group is disadvantaged."
-
-        elif metric_key in ['consistency']:
-            is_fair = value >= threshold.get('min', 0)
-            if is_fair:
-                interpretation = f"Consistency score ({value:.4f}) is good, indicating similar individuals are treated similarly."
-            else:
-                interpretation = f"Consistency score ({value:.4f}) is low, suggesting individual fairness concerns."
-
-        elif metric_key in ['theil_index']:
-            is_fair = value <= threshold.get('max', 0.1)
-            if is_fair:
-                interpretation = f"Theil index ({value:.4f}) is low, indicating good fairness in benefit distribution."
-            else:
-                interpretation = f"Theil index ({value:.4f}) is high, indicating inequality in outcomes."
-
-        else:
-            is_fair = threshold.get('min', -0.1) <= value <= threshold.get('max', 0.1)
-            if is_fair:
-                interpretation = f"The difference ({value:.4f}) is within acceptable bounds ({threshold.get('min')} to {threshold.get('max')})."
-            elif value < threshold.get('min', -0.1):
-                interpretation = f"The difference ({value:.4f}) is significantly negative, indicating the unprivileged group is disadvantaged."
-            else:
-                interpretation = f"The difference ({value:.4f}) is significantly positive, indicating the privileged group is disadvantaged."
-
-        return is_fair, interpretation

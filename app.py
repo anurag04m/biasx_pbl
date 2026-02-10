@@ -520,6 +520,8 @@ def main():
                                            file_name=f"mitigated_dataset_{method}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                                            mime='text/csv')
 
+                        new_results = None
+                        new_detector=None
                         # Option to re-run metrics on mitigated dataset
                         if st.button("🔁 Re-run Bias Analysis on Mitigated Dataset"):
                             with st.spinner("Re-calculating metrics on mitigated dataset..."):
@@ -548,6 +550,20 @@ def main():
                             comp_df = pd.DataFrame(comp_rows)
                             with st.expander("📊 Mitigation Comparison", expanded=True):
                                 st.dataframe(comp_df)
+
+                        # Replace current analysis with mitigated analysis in session state so the UI
+                        # shows mitigated dataset/results as the active report (user expectation)
+                        st.session_state.config['dataset'] = mitigated_df
+                        st.session_state.results = new_results
+                        st.session_state.detector = new_detector
+                        st.session_state.report_generated = True
+
+                        # Trigger a rerun so the main report area updates to the mitigated results
+                        try:
+                            st.experimental_rerun()
+                        except Exception:
+                            # If rerun isn't available in some Streamlit versions, we just continue
+                            pass
 
                     except Exception as e:
                         st.error(f"Mitigation failed: {str(e)}")
