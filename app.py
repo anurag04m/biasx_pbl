@@ -274,6 +274,8 @@ def main():
                 # Calculate metrics
                 results = detector.calculate_metrics(selected_metrics)
                 st.session_state.results = results
+                # Store detector so we can run mitigation later
+                st.session_state.detector = detector
                 st.session_state.report_generated = True
 
             except Exception as e:
@@ -312,7 +314,20 @@ def main():
         for metric_key, metric_result in results['metrics'].items():
             metric_info = available_metrics[metric_key]
 
-            with st.expander(f"**{metric_info['name']}** - Value: {metric_result['value']:.4f}", expanded=True):
+            # Safe formatting for display and numeric fallback for charts
+            raw_val = metric_result.get('value', None)
+            try:
+                if isinstance(raw_val, (int, float)) and not (isinstance(raw_val, float) and np.isnan(raw_val)):
+                    display_value = f"{raw_val:.4f}"
+                    gauge_value = raw_val
+                else:
+                    display_value = "N/A"
+                    gauge_value = 0.0
+            except Exception:
+                display_value = "N/A"
+                gauge_value = 0.0
+
+            with st.expander(f"**{metric_info['name']}** - Value: {display_value}", expanded=True):
                 col1, col2 = st.columns([2, 1])
 
                 with col1:
@@ -321,23 +336,19 @@ def main():
                     st.markdown(f"**Ideal Value:** {metric_info['ideal_value']}")
 
                     # Interpretation with color coding
-                    if metric_result['is_fair']:
+                    if metric_result.get('is_fair'):
                         st.markdown(
-                            f'<div class="success-box" style="background-color:#bdecb8; color:#0b3d0b; border-left: 4px solid #28a745; padding:1rem; margin:1rem 0; border-radius:0.5rem;">✅ <strong>Fair:</strong> {metric_result["interpretation"]}</div>',
+                            f'<div class="success-box" style="background-color:#bdecb8; color:#0b3d0b; border-left: 4px solid #28a745; padding:1rem; margin:1rem 0; border-radius:0.5rem;">✅ <strong>Fair:</strong> {metric_result.get("interpretation", "")}</div>',
                             unsafe_allow_html=True)
                     else:
                         st.markdown(
-                            f'<div class="danger-box">⚠️ <strong>Biased:</strong> {metric_result["interpretation"]}</div>',
+                            f'<div class="danger-box">⚠️ <strong>Biased:</strong> {metric_result.get("interpretation", "")}</div>',
                             unsafe_allow_html=True)
 
                 with col2:
-                    # Create gauge chart
-                    fig = create_gauge_chart(
-                        metric_result['value'],
-                        metric_info['name'],
-                        metric_key
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    # Create gauge chart using the safe numeric value
+                    fig = create_gauge_chart(gauge_value, metric_info['name'], metric_key)
+                    plot_chart(fig, use_container_width=True)
 
         st.markdown("---")
 
@@ -386,6 +397,178 @@ def main():
                 mime="application/json"
             )
 
+        st.markdown("---")
+
+        # Mitigation Section
+        st.header("🛠️ Mitigation Options")
+
+        detector = st.session_state.get('detector')
+        if detector is None:
+            st.info("Mitigation tools will be available after detection runs successfully.")
+        else:
+            # Determine which metrics are flagged as biased
+            biased = {k: v for k, v in results['metrics'].items() if v.get('is_fair') is False}
+
+            if len(biased) == 0:
+                st.success("No significant bias detected across selected metrics — mitigation not required.")
+            else:
+                st.warning(f"{len(biased)} metric(s) flagged as biased. Suggested mitigations are provided below.")
+
+                # Simple heuristic to recommend mitigation strength
+                severity_levels = []
+                for k, v in biased.items():
+                    val = v.get('value')
+                    try:
+                        if val is None or (isinstance(val, float) and np.isnan(val)):
+                            sev = 0
+                        else:
+                            # treat disparate impact style ratios separately
+                            if k in ('disparate_impact', 'positive_rate_ratio'):
+                                dev = abs(float(val) - 1.0)
+                                if dev > 0.25:
+                                    sev = 3
+                                elif dev > 0.1:
+                                    sev = 2
+                                else:
+                                    sev = 1
+                            else:
+                                # difference metrics: compare to threshold width
+                                info = available_metrics.get(k, {})
+                                thr = info.get('threshold', {})
+                                max_thr = thr.get('max', 0.1)
+                                min_thr = thr.get('min', -0.1)
+                                # use distance from nearest bound
+                                if val < min_thr:
+                                    diff = abs(min_thr - float(val))
+                                elif val > max_thr:
+                                    diff = abs(float(val) - max_thr)
+                                else:
+                                    diff = 0
+                                span = abs(max_thr - min_thr) if (max_thr - min_thr) != 0 else 0.1
+                                if diff > 2 * span:
+                                    sev = 3
+                                elif diff > span:
+                                    sev = 2
+                                else:
+                                    sev = 1
+                    except Exception:
+                        sev = 1
+                    severity_levels.append(sev)
+
+                overall_severity = max(severity_levels) if severity_levels else 0
+
+                # Recommendation logic
+                if overall_severity >= 3:
+                    recommendation = "High bias detected — recommend trying all mitigation methods (Reweighing, Disparate Impact Remover, Optimized Preprocessing) and evaluating their effects."
+                    suggested_methods = ['reweighing', 'disparate_impact_remover', 'optimized_preprocessing']
+                elif overall_severity == 2:
+                    recommendation = "Moderate bias detected — recommend Disparate Impact Remover and Reweighing as first steps."
+                    suggested_methods = ['disparate_impact_remover', 'reweighing']
+                else:
+                    recommendation = "Minor bias detected — recommend Reweighing (low-cost) first."
+                    suggested_methods = ['reweighing']
+
+                st.markdown(f"**Recommendation:** {recommendation}")
+
+                # Present mitigation selection UI
+                col_a, col_b = st.columns([2, 1])
+                with col_a:
+                    method = st.selectbox(
+                        "Select Dataset Mitigation Method",
+                        options=['reweighing', 'disparate_impact_remover', 'optimized_preprocessing'],
+                        format_func=lambda x: x.replace('_', ' ').title(),
+                        index=0 if suggested_methods[0] == 'reweighing' else (1 if suggested_methods[0]=='disparate_impact_remover' else 2)
+                    )
+
+                    # Additional params for methods
+                    repair_level = None
+                    if method == 'disparate_impact_remover':
+                        repair_level = st.slider("Repair Level", 0.0, 1.0, 1.0, 0.01,
+                                                 help="0 = no repair, 1 = full repair")
+
+                    if method == 'optimized_preprocessing':
+                        st.info('Optimized Preprocessing can be slow. Only use on small-medium datasets or in experiments.')
+
+                with col_b:
+                    st.markdown("**Model Mitigation**")
+                    st.markdown("(Placeholder) You can apply post-processing model-level mitigation techniques in your training pipeline.")
+                    if st.button("🧩 Apply Model Mitigation (placeholder)"):
+                        st.info("Model mitigation UI placeholder created. Backend implementation is not included.")
+
+                # Apply dataset mitigation
+                if st.button("▶️ Apply Dataset Mitigation"):
+                    try:
+                        kwargs = {}
+                        if repair_level is not None:
+                            kwargs['repair_level'] = repair_level
+
+                        with st.spinner("Applying mitigation — this may take a moment..."):
+                            mitigated_df = detector.mitigate_dataset(method, **kwargs)
+
+                        # Save mitigated_df in session for later use
+                        st.session_state.mitigated_df = mitigated_df
+
+                        st.success("Mitigation applied successfully. Preview and download below.")
+
+                        with st.expander("📋 Mitigated Dataset Preview", expanded=True):
+                            st.dataframe(mitigated_df.head(10))
+                            st.write(f"**Shape:** {mitigated_df.shape}")
+
+                        # Offer download
+                        csv = mitigated_df.to_csv(index=False)
+                        st.download_button(label="⬇️ Download Mitigated Dataset (CSV)", data=csv,
+                                           file_name=f"mitigated_dataset_{method}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                           mime='text/csv')
+
+                        new_results = None
+                        new_detector=None
+                        # Option to re-run metrics on mitigated dataset
+                        if st.button("🔁 Re-run Bias Analysis on Mitigated Dataset"):
+                            with st.spinner("Re-calculating metrics on mitigated dataset..."):
+                                new_detector = BiasDetector(
+                                    dataset=mitigated_df,
+                                    protected_attr=st.session_state.config['protected_attr'],
+                                    label_column=st.session_state.config['label_column'],
+                                    privileged_value=st.session_state.config['privileged_value'],
+                                    unprivileged_value=st.session_state.config['unprivileged_value'],
+                                    detection_type='Dataset Bias Detection'
+                                )
+                                # Use the same metrics originally selected (or all dataset metrics)
+                                metric_keys = list(results['metrics'].keys())
+                                new_results = new_detector.calculate_metrics(metric_keys)
+                                st.session_state.mitigated_results = new_results
+
+                            st.success("Re-analysis complete. See comparison below.")
+
+                            # Show quick comparison table
+                            comp_rows = []
+                            for mk in metric_keys:
+                                orig = results['metrics'].get(mk, {}).get('value')
+                                new = new_results['metrics'].get(mk, {}).get('value')
+                                comp_rows.append({'metric': available_metrics[mk]['name'], 'original': orig, 'mitigated': new})
+
+                            comp_df = pd.DataFrame(comp_rows)
+                            with st.expander("📊 Mitigation Comparison", expanded=True):
+                                st.dataframe(comp_df)
+
+                        # Replace current analysis with mitigated analysis in session state so the UI
+                        # shows mitigated dataset/results as the active report (user expectation)
+                        st.session_state.config['dataset'] = mitigated_df
+                        st.session_state.results = new_results
+                        st.session_state.detector = new_detector
+                        st.session_state.report_generated = True
+
+                        # Trigger a rerun so the main report area updates to the mitigated results
+                        try:
+                            st.experimental_rerun()
+                        except Exception:
+                            # If rerun isn't available in some Streamlit versions, we just continue
+                            pass
+
+                    except Exception as e:
+                        st.error(f"Mitigation failed: {str(e)}")
+                        st.exception(e)
+
 
 def create_gauge_chart(value, title, metric_key):
     """Create a gauge chart for metric visualization"""
@@ -414,7 +597,6 @@ def create_gauge_chart(value, title, metric_key):
         ))
     else:
         # Difference metrics: ideal around 0
-        abs_value = abs(value)
         fig = go.Figure(go.Indicator(
             mode="gauge+number+delta",
             value=value,
@@ -441,6 +623,59 @@ def create_gauge_chart(value, title, metric_key):
     return fig
 
 
+def plot_chart(fig, use_container_width=True):
+    """
+    Wrapper around st.plotly_chart:
+    - use_container_width=True  -> width='stretch'
+    - use_container_width=False -> width='content'
+    Falls back to boolean `use_container_width` for older Streamlit versions.
+    """
+    width = 'stretch' if use_container_width else 'content'
+    try:
+        st.plotly_chart(fig, width=width)
+    except TypeError:
+        # Fallback for Streamlit versions that expect use_container_width boolean
+        st.plotly_chart(fig, use_container_width=(width == 'stretch'))
+
+
+def create_metric_comparison_chart(results, available_metrics):
+    """Create metric comparison visualization (handles missing values)"""
+    metric_names = []
+    metric_values = []
+    colors = []
+
+    for metric_key, metric_result in results['metrics'].items():
+        metric_names.append(available_metrics[metric_key]['name'])
+        val = metric_result.get('value', None)
+        if isinstance(val, (int, float)) and not (isinstance(val, float) and np.isnan(val)):
+            metric_values.append(abs(val))
+            colors.append('green' if metric_result.get('is_fair') else 'red')
+        else:
+            # Show missing values as zero length and gray color
+            metric_values.append(0.0)
+            colors.append('gray')
+
+    fig = go.Figure(go.Bar(
+        x=metric_values,
+        y=metric_names,
+        orientation='h',
+        marker=dict(color=colors),
+        text=[(f"{v:.4f}" if v != 0 else "N/A") for v in metric_values],
+        textposition='auto'
+    ))
+
+    fig.update_layout(
+        title="Metric Values Comparison (Absolute)",
+        xaxis_title="Absolute Metric Value",
+        yaxis_title="Metric",
+        height=max(400, len(metric_names) * 50)
+    )
+
+    return fig
+
+
+
+
 def create_group_distribution_chart(results):
     """Create group distribution visualization"""
     fig = go.Figure()
@@ -463,34 +698,6 @@ def create_group_distribution_chart(results):
     return fig
 
 
-def create_metric_comparison_chart(results, available_metrics):
-    """Create metric comparison visualization"""
-    metric_names = []
-    metric_values = []
-    colors = []
-
-    for metric_key, metric_result in results['metrics'].items():
-        metric_names.append(available_metrics[metric_key]['name'])
-        metric_values.append(abs(metric_result['value']))
-        colors.append('green' if metric_result['is_fair'] else 'red')
-
-    fig = go.Figure(go.Bar(
-        x=metric_values,
-        y=metric_names,
-        orientation='h',
-        marker=dict(color=colors),
-        text=[f"{v:.4f}" for v in metric_values],
-        textposition='auto'
-    ))
-
-    fig.update_layout(
-        title="Metric Values Comparison (Absolute)",
-        xaxis_title="Absolute Metric Value",
-        yaxis_title="Metric",
-        height=max(400, len(metric_names) * 50)
-    )
-
-    return fig
 
 
 def create_fairness_dashboard(results, available_metrics):

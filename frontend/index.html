@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bias Detection Tool</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🔍 Bias Detection Tool</h1>
+
+    <!-- Message Container -->
+    <div id="message-container"></div>
+
+    <!-- API Configuration Section -->
+    <div class="section">
+      <h3>API Configuration</h3>
+      <p class="muted">
+        Backend API: <strong id="api-url"></strong><br>
+        To use a different backend, add <code>?api=https://your-backend-url</code> to the page URL.
+      </p>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="section">
+      <h2>1. Upload Dataset</h2>
+      <div class="form-group">
+        <label for="dataset-file">Select CSV file:</label>
+        <input type="file" id="dataset-file" accept=".csv">
+      </div>
+      <button id="upload-btn">Upload Dataset</button>
+      <div id="session-info" class="session-info hidden">
+        Session ID: <strong id="session-id"></strong>
+      </div>
+    </div>
+
+    <!-- Analysis Section -->
+    <div id="analysis-section" class="section hidden">
+      <h2>2. Analyze Bias</h2>
+
+      <div class="row">
+        <div class="col">
+          <div class="form-group">
+            <label for="protected-attr">Protected Attribute:</label>
+            <select id="protected-attr"></select>
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group">
+            <label for="label-col">Label Column:</label>
+            <select id="label-col"></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <div class="form-group">
+            <label for="priv-val">Privileged Value:</label>
+            <input type="text" id="priv-val" placeholder="e.g., 1">
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group">
+            <label for="unpriv-val">Unprivileged Value:</label>
+            <input type="text" id="unpriv-val" placeholder="e.g., 0">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="metrics">Metrics (comma-separated):</label>
+        <input type="text" id="metrics" value="disparate_impact,statistical_parity_difference">
+        <p class="muted">Available metrics: disparate_impact, statistical_parity_difference, consistency</p>
+      </div>
+
+      <button id="analyze-btn">Run Analysis</button>
+
+      <!-- Analysis Results -->
+      <div id="analysis-results" class="hidden">
+        <h3>Analysis Results</h3>
+        <div class="result-box">
+          <pre id="results-json"></pre>
+        </div>
+
+        <div id="suggestion-box" class="suggestion-box hidden">
+          <h4>💡 Mitigation Suggestion</h4>
+          <p id="suggestion-text"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mitigation Section -->
+    <div id="mitigation-section" class="section hidden">
+      <h2>3. Apply Mitigation</h2>
+
+      <div class="form-group">
+        <label for="mitigation-method">Mitigation Method:</label>
+        <select id="mitigation-method">
+          <option value="reweighing">Reweighing</option>
+          <option value="disparate_impact_remover">Disparate Impact Remover</option>
+          <option value="optimized_preprocessing">Optimized Preprocessing</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="repair-level-group" style="display:none;">
+        <label for="repair-level">Repair Level (for Disparate Impact Remover):</label>
+        <input type="number" id="repair-level" min="0" max="1" step="0.01" value="1.0">
+        <p class="muted">Range: 0.0 to 1.0 (1.0 = full repair)</p>
+      </div>
+
+      <button id="mitigate-btn">Apply Mitigation</button>
+      <button id="clear-btn" class="secondary">Clear Results</button>
+      <button id="model-mitigate-btn" class="secondary">Mitigate Model (Frontend Only)</button>
+
+      <!-- Mitigation Results -->
+      <div id="mitigation-results" class="hidden">
+        <h3>Mitigation Results</h3>
+        <div class="result-box">
+          <pre id="mitigation-json"></pre>
+        </div>
+      </div>
+
+      <!-- Download Section -->
+      <div id="download-section" class="hidden">
+        <h3>Download Mitigated Dataset</h3>
+        <p>
+          <a id="download-link" href="#" target="_blank" download>
+            <button>📥 Download CSV</button>
+          </a>
+        </p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="muted" style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+      <p>
+        <strong>Note:</strong> This frontend can be deployed as a static site on GitHub Pages.
+        Make sure your Flask backend is running and CORS is enabled.
+      </p>
+    </div>
+  </div>
+
+  <!-- Load JavaScript -->
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+
+  <script>
+    // Show/hide repair level based on method selection
+    document.getElementById('mitigation-method').addEventListener('change', (e) => {
+      const repairGroup = document.getElementById('repair-level-group');
+      if (e.target.value === 'disparate_impact_remover') {
+        repairGroup.style.display = 'block';
+      } else {
+        repairGroup.style.display = 'none';
+      }
+    });
+  </script>
+</body>
+</html>

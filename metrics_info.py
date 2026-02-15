@@ -38,6 +38,25 @@ DATASET_METRICS = {
         'interpretation': 'Large differences in base rates between groups may indicate underlying bias in the data.',
         'threshold': {'min': -0.1, 'max': 0.1},
         'type': 'dataset'
+    },
+    # Additional dataset-level metrics
+    'selection_rate': {
+        'name': 'Selection Rate (Statistical Parity)',
+        'description': 'Difference in selection rates between unprivileged and privileged groups (same as Statistical Parity Difference).',
+        'formula': 'P(Y=1|D=unprivileged) - P(Y=1|D=privileged)',
+        'ideal_value': '0 (no difference)',
+        'interpretation': 'A value close to 0 indicates similar selection rates across groups. Use this to quickly assess group-level disparities in labels.',
+        'threshold': {'min': -0.1, 'max': 0.1},
+        'type': 'dataset'
+    },
+    'positive_rate_ratio': {
+        'name': 'Positive Rate Ratio (Disparate Impact Ratio)',
+        'description': 'Ratio of selection rates between unprivileged and privileged groups (alternate name for Disparate Impact). Often used with the 80% rule.',
+        'formula': 'P(Y=1|D=unprivileged) / P(Y=1|D=privileged)',
+        'ideal_value': '1.0 (equal rates)',
+        'interpretation': 'Values between 0.8 and 1.25 are commonly considered acceptable. Values outside this range indicate potential disparate impact.',
+        'threshold': {'min': 0.8, 'max': 1.25},
+        'type': 'dataset'
     }
 }
 
@@ -130,6 +149,35 @@ CLASSIFICATION_METRICS = {
         'ideal_value': '0 (perfect equality)',
         'interpretation': 'Lower values indicate more fairness. Higher values indicate greater inequality in benefit allocation.',
         'threshold': {'min': 0, 'max': 0.1},
+        'type': 'classification'
+    },
+
+    # New metrics added below
+    'predictive_parity_difference': {
+        'name': 'Predictive Parity Difference',
+        'description': 'Difference in Positive Predictive Value (precision) between unprivileged and privileged groups.',
+        'formula': 'PPV_unprivileged - PPV_privileged',
+        'ideal_value': '0 (equal PPV)',
+        'interpretation': 'A value close to 0 indicates predictive parity. Negative values indicate unprivileged group has lower precision.',
+        'threshold': {'min': -0.1, 'max': 0.1},
+        'type': 'classification'
+    },
+    'selection_rate_difference': {
+        'name': 'Selection Rate Difference (Predictions)',
+        'description': 'Difference in predicted positive (selection) rates between groups (prediction-level statistical parity).',
+        'formula': 'P(Ŷ=1|D=unprivileged) - P(Ŷ=1|D=privileged)',
+        'ideal_value': '0 (no difference)',
+        'interpretation': 'A value close to 0 indicates similar selection rates in predictions between groups.',
+        'threshold': {'min': -0.1, 'max': 0.1},
+        'type': 'classification'
+    },
+    'balanced_accuracy_difference': {
+        'name': 'Balanced Accuracy Difference',
+        'description': 'Difference in balanced accuracy (0.5*(TPR+TNR)) between unprivileged and privileged groups.',
+        'formula': 'BalancedAcc_unprivileged - BalancedAcc_privileged',
+        'ideal_value': '0 (equal balanced accuracy)',
+        'interpretation': 'A value close to 0 indicates similar balanced accuracy across groups. Large deviations suggest fairness issues in sensitivity/specificity balance.',
+        'threshold': {'min': -0.1, 'max': 0.1},
         'type': 'classification'
     }
 }
