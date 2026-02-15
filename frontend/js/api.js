@@ -3,22 +3,41 @@
 const API = {
   // Get the API base URL - defaults to localhost:5000 but can be overridden via URL param
   getBaseUrl() {
-    const params = new URLSearchParams(window.location.search);
-    const apiParam = params.get('api');
-
-    if (apiParam) {
-      return apiParam.replace(/\/+$/, '');
+    // allow explicit override via ?api= param
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const apiParam = params.get('api');
+      if (apiParam) {
+        return apiParam.replace(/\/+$|\/$/, '').replace(/\s+/g, '');
+      }
+    } catch (e) {
+      // ignore
     }
 
-    // Default: same protocol and host, port 5000
-    const protocol = window.location.protocol;
-    const hostname = window.location.hostname || 'localhost';
-    return `${protocol}//${hostname}:5000`;
+    // Determine a sensible default. If the page is served over http/https use same host with port 5000.
+    // If the page is opened via file:// (or other non-http protocols) fall back to http://localhost:5000
+    try {
+      const loc = window.location;
+      const protocol = (loc && loc.protocol) ? loc.protocol : null;
+      const hostname = (loc && loc.hostname) ? loc.hostname : null;
+
+      if (protocol === 'http:' || protocol === 'https:') {
+        // If hostname is empty (rare), fallback to localhost
+        const host = hostname && hostname.length ? hostname : 'localhost';
+        return `${protocol}//${host}:5000`;
+      }
+    } catch (e) {
+      // ignore and fallback
+    }
+
+    // Default fallback for file:// or unknown contexts
+    return 'http://localhost:5000';
   },
 
   // Make an API request
   async request(endpoint, options = {}) {
-    const url = `${this.getBaseUrl()}${endpoint}`;
+    const base = this.getBaseUrl();
+    const url = `${base}${endpoint}`;
 
     try {
       const response = await fetch(url, {
