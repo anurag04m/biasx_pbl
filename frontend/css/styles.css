@@ -258,3 +258,88 @@ a {
 a:hover {
   text-decoration: underline;
 }
+
+/* Visualization Styles */
+.metric-card-detail {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  padding-bottom: 8px;
+}
+
+.metric-header h4 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #2c3e50;
+}
+
+.badge {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8em;
+  font-weight: 600;
+}
+
+.status-fair {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-biased {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.metric-body {
+  display: flex;
+  gap: 16px;
+}
+
+.metric-info {
+  flex: 1;
+  font-size: 0.95em;
+}
+
+.metric-chart {
+  flex: 0 0 180px;
+  min-height: 150px;
+}
+
+.interpretation {
+  margin-top: 8px;
+  padding: 8px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: #555;
+}
+
+/* Adjust grid for visualizations */
+#viz-group-distribution,
+#viz-fairness-dashboard {
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+  padding: 10px;
+}
+
+#viz-metric-comparison,
+#viz-mitigation-comparison {
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+  padding: 10px;
+  min-height: 400px;
+}

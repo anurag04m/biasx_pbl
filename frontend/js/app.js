@@ -296,7 +296,21 @@ class BiasDetectionApp {
     container.classList.remove('hidden');
 
     // Display raw results
+    // Display raw results
     document.getElementById('results-json').textContent = JSON.stringify(this.analysisResult, null, 2);
+
+    // Render Visualizations
+    const detectionType = document.getElementById('detection-type').value;
+    const metricsDef = detectionType === 'Dataset Bias Detection' ?
+      (this.metrics.dataset_metrics || {}) :
+      (this.metrics.classification_metrics || {});
+
+    // Clear previous visualizations if any
+    ['viz-group-distribution', 'viz-fairness-dashboard', 'viz-metric-comparison', 'viz-detailed-metrics'].forEach(id => {
+      document.getElementById(id).innerHTML = '';
+    });
+
+    Visualization.renderAnalysisVisualizations(this.analysisResult, metricsDef);
 
     // Display suggestion
     const suggestion = Utils.computeSuggestion(this.analysisResult);
@@ -337,7 +351,17 @@ class BiasDetectionApp {
 
       // Display mitigation results
       document.getElementById('mitigation-results').classList.remove('hidden');
+      // Display mitigation results
+      document.getElementById('mitigation-results').classList.remove('hidden');
       document.getElementById('mitigation-json').textContent = JSON.stringify(response.new_results, null, 2);
+
+      // Render Mitigation Comparison
+      // Use dataset metrics since mitigation currently operates on dataset level
+      const metricsDef = this.metrics.dataset_metrics || {};
+
+      if (this.analysisResult) {
+        Visualization.renderMitigationComparison(this.analysisResult, response.new_results, metricsDef);
+      }
 
       // Show download link if available
       if (response.download_endpoint) {
