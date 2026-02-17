@@ -114,10 +114,16 @@ def analyze():
 
     # Optional dataset_pred (CSV string) for model bias detection
     dataset_pred = None
+    id_column = payload.get('id_column', None)
+    pred_label_col = payload.get('pred_label_col', None)
+    pred_proba_col = payload.get('pred_proba_col', None)
+    proba_threshold = payload.get('proba_threshold', 0.5)
+
     if 'dataset_pred' in payload and payload['dataset_pred']:
         try:
             dataset_pred = pd.read_csv(io.StringIO(payload['dataset_pred']))
             print(f"[ANALYZE] Loaded dataset_pred. Shape: {dataset_pred.shape}")
+            print(f"[ANALYZE] Prediction params: id_col={id_column}, pred_label={pred_label_col}, pred_proba={pred_proba_col}, threshold={proba_threshold}")
         except Exception as e:
             print(f"[ANALYZE] ERROR parsing dataset_pred: {e}")
             return jsonify({'error': f'Failed to parse dataset_pred CSV: {e}'}), 400
@@ -131,7 +137,11 @@ def analyze():
             privileged_value=privileged_value,
             unprivileged_value=unprivileged_value,
             dataset_pred=dataset_pred,
-            detection_type=detection_type
+            detection_type=detection_type,
+            id_column=id_column,
+            pred_label_col=pred_label_col,
+            pred_proba_col=pred_proba_col,
+            proba_threshold=float(proba_threshold) if proba_threshold else 0.5
         )
         print("[ANALYZE] BiasDetector instantiated successfully")
         results = detector.calculate_metrics(selected_metrics)

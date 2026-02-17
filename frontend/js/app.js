@@ -7,12 +7,15 @@ class BiasDetectionApp {
     this.uniques = {};
     this.analysisResult = null;
     this.metrics = null;
+    this.predictionData = null; // Store prediction dataset CSV text
+    this.predictionColumns = [];
     this.init();
   }
 
   async init() {
     // Bind event listeners
     document.getElementById('upload-btn').addEventListener('click', () => this.uploadDataset());
+    document.getElementById('upload-prediction-btn').addEventListener('click', () => this.uploadPredictionDataset());
     document.getElementById('analyze-btn').addEventListener('click', () => this.runAnalysis());
     document.getElementById('mitigate-btn').addEventListener('click', () => this.runMitigation());
     document.getElementById('clear-btn').addEventListener('click', () => this.clearResults());
@@ -22,6 +25,9 @@ class BiasDetectionApp {
     document.getElementById('protected-attr').addEventListener('change', () => this.onProtectedAttrChange());
     document.getElementById('priv-val').addEventListener('change', () => this.onPrivilegedValueChange());
     document.getElementById('detection-type').addEventListener('change', () => this.onDetectionTypeChange());
+
+    // Bind file input change listener for prediction dataset
+    document.getElementById('prediction-file').addEventListener('change', () => this.onPredictionFileSelected());
 
     // Display current API URL
     document.getElementById('api-url').textContent = API.getBaseUrl();
@@ -163,6 +169,100 @@ class BiasDetectionApp {
   onDetectionTypeChange() {
     // Re-populate metrics when detection type changes
     this.populateMetrics();
+
+    // Show/hide prediction upload section based on detection type
+    const detectionType = document.getElementById('detection-type').value;
+    const predictionSection = document.getElementById('prediction-upload-section');
+
+    if (detectionType === 'Model Bias Detection') {
+      predictionSection.classList.remove('hidden');
+    } else {
+      predictionSection.classList.add('hidden');
+      // Clear prediction data when switching back to dataset detection
+      this.predictionData = null;
+      this.predictionColumns = [];
+      document.getElementById('prediction-info').classList.add('hidden');
+    }
+  }
+
+  onPredictionFileSelected() {
+    // When a prediction file is selected, populate the column dropdowns
+    const fileInput = document.getElementById('prediction-file');
+    const file = fileInput.files[0];
+
+    if (!file) return;
+
+    // Read the CSV to get columns
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      const lines = text.split('\n');
+      if (lines.length > 0) {
+        const headers = lines[0].split(',').map(h => h.trim());
+        this.predictionColumns = headers;
+
+        // Populate dropdowns
+        const predLabelSelect = document.getElementById('pred-label-col');
+        const predProbaSelect = document.getElementById('pred-proba-col');
+        const idColSelect = document.getElementById('id-col');
+
+        predLabelSelect.innerHTML = '';
+        predProbaSelect.innerHTML = '<option value="">-- None --</option>';
+
+        // Add original dataset columns to id-col dropdown
+        idColSelect.innerHTML = '<option value="">-- None (use row order) --</option>';
+        this.columns.forEach(col => {
+          const option = document.createElement('option');
+          option.value = col;
+          option.textContent = col;
+          idColSelect.appendChild(option);
+        });
+
+        headers.forEach(col => {
+          const option1 = document.createElement('option');
+          option1.value = col;
+          option1.textContent = col;
+          predLabelSelect.appendChild(option1);
+
+          const option2 = document.createElement('option');
+          option2.value = col;
+          option2.textContent = col;
+          predProbaSelect.appendChild(option2);
+        });
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  async uploadPredictionDataset() {
+    const fileInput = document.getElementById('prediction-file');
+    const file = fileInput.files[0];
+
+    if (!file) {
+      Utils.showError('Please select a prediction CSV file');
+      return;
+    }
+
+    try {
+      this.setLoading(true);
+
+      // Read the file as text
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        this.predictionData = e.target.result;
+        document.getElementById('prediction-info').classList.remove('hidden');
+        Utils.showSuccess('Prediction dataset loaded successfully!');
+        this.setLoading(false);
+      };
+      reader.onerror = () => {
+        Utils.showError('Failed to read prediction file');
+        this.setLoading(false);
+      };
+      reader.readAsText(file);
+    } catch (error) {
+      Utils.showError(error);
+      this.setLoading(false);
+    }
   }
 
   populateMetrics() {
@@ -264,6 +364,20 @@ class BiasDetectionApp {
       return;
     }
 
+    // Check if prediction dataset is required and uploaded
+    if (detectionType === 'Model Bias Detection') {
+      if (!this.predictionData) {
+        Utils.showError('Please upload a prediction dataset for Model Bias Detection');
+        return;
+      }
+
+      const predLabelCol = document.getElementById('pred-label-col').value;
+      if (!predLabelCol) {
+        Utils.showError('Please select the predicted label column');
+        return;
+      }
+    }
+
     const payload = {
       session_id: this.sessionId,
       detection_type: detectionType,
@@ -273,6 +387,21 @@ class BiasDetectionApp {
       unprivileged_value: unprivVal,
       selected_metrics: selectedMetrics,
     };
+
+    // Add prediction dataset and related parameters if Model Bias Detection
+    if (detectionType === 'Model Bias Detection' && this.predictionData) {
+      payload.dataset_pred = this.predictionData;
+
+      const idCol = document.getElementById('id-col').value;
+      const predLabelCol = document.getElementById('pred-label-col').value;
+      const predProbaCol = document.getElementById('pred-proba-col').value;
+      const probaThreshold = parseFloat(document.getElementById('proba-threshold').value);
+
+      if (idCol) payload.id_column = idCol;
+      if (predLabelCol) payload.pred_label_col = predLabelCol;
+      if (predProbaCol) payload.pred_proba_col = predProbaCol;
+      payload.proba_threshold = probaThreshold;
+    }
 
     console.log('Analysis payload:', payload);
 

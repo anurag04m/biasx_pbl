@@ -27,12 +27,63 @@
     <div class="section">
       <h2>1. Upload Dataset</h2>
       <div class="form-group">
-        <label for="dataset-file">Select CSV file:</label>
+        <label for="dataset-file">Select Original Dataset CSV:</label>
         <input type="file" id="dataset-file" accept=".csv">
       </div>
       <button id="upload-btn">Upload Dataset</button>
       <div id="session-info" class="session-info hidden">
         Session ID: <strong id="session-id"></strong>
+      </div>
+    </div>
+
+    <!-- Upload Prediction Dataset Section (for Model Bias Detection) -->
+    <div id="prediction-upload-section" class="section hidden">
+      <h2>1b. Upload Prediction Dataset (Required for Model Bias Detection)</h2>
+      <p class="muted">
+        Upload a CSV file containing model predictions. This file should include:
+        <br>• Same rows as the original dataset (or an ID column to match)
+        <br>• Predicted labels column (e.g., y_pred, prediction)
+        <br>• Optional: Prediction probabilities column
+      </p>
+      <div class="form-group">
+        <label for="prediction-file">Select Prediction CSV:</label>
+        <input type="file" id="prediction-file" accept=".csv">
+      </div>
+      <div class="row">
+        <div class="col">
+          <div class="form-group">
+            <label for="id-col">ID Column (optional, for matching rows):</label>
+            <select id="id-col">
+              <option value="">-- None (use row order) --</option>
+            </select>
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group">
+            <label for="pred-label-col">Predicted Label Column:</label>
+            <select id="pred-label-col"></select>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col">
+          <div class="form-group">
+            <label for="pred-proba-col">Prediction Probability Column (optional):</label>
+            <select id="pred-proba-col">
+              <option value="">-- None --</option>
+            </select>
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group">
+            <label for="proba-threshold">Probability Threshold:</label>
+            <input type="number" id="proba-threshold" value="0.5" min="0" max="1" step="0.1">
+          </div>
+        </div>
+      </div>
+      <button id="upload-prediction-btn">Upload Prediction Dataset</button>
+      <div id="prediction-info" class="session-info hidden">
+        ✓ Prediction dataset uploaded
       </div>
     </div>
 
