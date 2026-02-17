@@ -42,6 +42,18 @@
       <div class="row">
         <div class="col">
           <div class="form-group">
+            <label for="detection-type">Detection Type:</label>
+            <select id="detection-type">
+              <option value="Dataset Bias Detection">Dataset Bias Detection</option>
+              <option value="Model Bias Detection">Model Bias Detection</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <div class="form-group">
             <label for="protected-attr">Protected Attribute:</label>
             <select id="protected-attr"></select>
           </div>
@@ -58,21 +70,22 @@
         <div class="col">
           <div class="form-group">
             <label for="priv-val">Privileged Value:</label>
-            <input type="text" id="priv-val" placeholder="e.g., 1">
+            <select id="priv-val"></select>
           </div>
         </div>
         <div class="col">
           <div class="form-group">
             <label for="unpriv-val">Unprivileged Value:</label>
-            <input type="text" id="unpriv-val" placeholder="e.g., 0">
+            <select id="unpriv-val"></select>
           </div>
         </div>
       </div>
 
       <div class="form-group">
-        <label for="metrics">Metrics (comma-separated):</label>
-        <input type="text" id="metrics" value="disparate_impact,statistical_parity_difference">
-        <p class="muted">Available metrics: disparate_impact, statistical_parity_difference, consistency</p>
+        <label>Select Metrics:</label>
+        <div id="metrics-container" class="metrics-grid">
+          <!-- Metrics checkboxes will be populated here -->
+        </div>
       </div>
 
       <button id="analyze-btn">Run Analysis</button>
@@ -134,12 +147,7 @@
     </div>
 
     <!-- Footer -->
-    <div class="muted" style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-      <p>
-        <strong>Note:</strong> This frontend can be deployed as a static site on GitHub Pages.
-        Make sure your Flask backend is running and CORS is enabled.
-      </p>
-    </div>
+
   </div>
 
   <!-- Load JavaScript -->

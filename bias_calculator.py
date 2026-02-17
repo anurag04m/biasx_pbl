@@ -115,17 +115,45 @@ class BiasDetector:
         # Prepare AIF360 datasets
         self._prepare_aif360_datasets()
 
-    def _validate_inputs(self) -> None:
-        """Validate presence of required columns and basic sanity checks."""
+    def _validate_inputs(self):
+        """Validate inputs before processing"""
         if self.protected_attr not in self.dataset.columns:
             raise ValueError(f"Protected attribute '{self.protected_attr}' not found in dataset")
         if self.label_column not in self.dataset.columns:
             raise ValueError(f"Label column '{self.label_column}' not found in dataset")
+
+        # Convert privileged/unprivileged values to match the dtype of the protected attribute column
+        # This handles cases where values come as strings from web forms but dataset has integers
+        col_dtype = self.dataset[self.protected_attr].dtype
+        try:
+            if col_dtype in ['int64', 'int32', 'int16', 'int8']:
+                self.privileged_value = int(self.privileged_value)
+                self.unprivileged_value = int(self.unprivileged_value)
+            elif col_dtype in ['float64', 'float32', 'float16']:
+                self.privileged_value = float(self.privileged_value)
+                self.unprivileged_value = float(self.unprivileged_value)
+            # For object/string types, keep as-is or convert to string
+            elif col_dtype == 'object':
+                # Try to match the type of existing values
+                sample_val = self.dataset[self.protected_attr].dropna().iloc[0] if len(self.dataset[self.protected_attr].dropna()) > 0 else None
+                if sample_val is not None:
+                    if isinstance(sample_val, (int, np.integer)):
+                        self.privileged_value = int(self.privileged_value)
+                        self.unprivileged_value = int(self.unprivileged_value)
+                    elif isinstance(sample_val, (float, np.floating)):
+                        self.privileged_value = float(self.privileged_value)
+                        self.unprivileged_value = float(self.unprivileged_value)
+                    else:
+                        self.privileged_value = str(self.privileged_value)
+                        self.unprivileged_value = str(self.unprivileged_value)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Could not convert privileged/unprivileged values to match column dtype {col_dtype}: {e}")
+
         # Check that privileged and unprivileged groups exist
         if self.privileged_value not in self.dataset[self.protected_attr].unique():
-            raise ValueError("Privileged value not found in protected attribute column")
+            raise ValueError(f"Privileged value {self.privileged_value} (type: {type(self.privileged_value)}) not found in protected attribute column. Available values: {self.dataset[self.protected_attr].unique()}")
         if self.unprivileged_value not in self.dataset[self.protected_attr].unique():
-            raise ValueError("Unprivileged value not found in protected attribute column")
+            raise ValueError(f"Unprivileged value {self.unprivileged_value} (type: {type(self.unprivileged_value)}) not found in protected attribute column. Available values: {self.dataset[self.protected_attr].unique()}")
         # Basic label sanity: ensure binary-like labels (0/1 or boolean). Apply label_mapping if provided.
         if self.label_mapping is not None:
             # Map values using provided mapping. Values not in mapping will become NaN.

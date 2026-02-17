@@ -70,6 +70,13 @@ const API = {
     });
   },
 
+  // Fetch available metrics
+  async getMetrics() {
+    return this.request('/metrics', {
+      method: 'GET',
+    });
+  },
+
   // Run bias analysis
   async analyze(payload) {
     return this.request('/analyze', {
