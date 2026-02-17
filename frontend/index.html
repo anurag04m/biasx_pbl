@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bias Detection Tool</title>
   <link rel="stylesheet" href="css/styles.css">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
 <body>
   <div class="container">
@@ -26,7 +27,7 @@
     <div class="section">
       <h2>1. Upload Dataset</h2>
       <div class="form-group">
-        <label for="dataset-file">Select CSV file:</label>
+        <label for="dataset-file">Select Original Dataset CSV:</label>
         <input type="file" id="dataset-file" accept=".csv">
       </div>
       <button id="upload-btn">Upload Dataset</button>
@@ -35,9 +36,72 @@
       </div>
     </div>
 
+    <!-- Upload Prediction Dataset Section (for Model Bias Detection) -->
+    <div id="prediction-upload-section" class="section hidden">
+      <h2>1b. Upload Prediction Dataset (Required for Model Bias Detection)</h2>
+      <p class="muted">
+        Upload a CSV file containing model predictions. This file should include:
+        <br>• Same rows as the original dataset (or an ID column to match)
+        <br>• Predicted labels column (e.g., y_pred, prediction)
+        <br>• Optional: Prediction probabilities column
+      </p>
+      <div class="form-group">
+        <label for="prediction-file">Select Prediction CSV:</label>
+        <input type="file" id="prediction-file" accept=".csv">
+      </div>
+      <div class="row">
+        <div class="col">
+          <div class="form-group">
+            <label for="id-col">ID Column (optional, for matching rows):</label>
+            <select id="id-col">
+              <option value="">-- None (use row order) --</option>
+            </select>
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group">
+            <label for="pred-label-col">Predicted Label Column:</label>
+            <select id="pred-label-col"></select>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col">
+          <div class="form-group">
+            <label for="pred-proba-col">Prediction Probability Column (optional):</label>
+            <select id="pred-proba-col">
+              <option value="">-- None --</option>
+            </select>
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group">
+            <label for="proba-threshold">Probability Threshold:</label>
+            <input type="number" id="proba-threshold" value="0.5" min="0" max="1" step="0.1">
+          </div>
+        </div>
+      </div>
+      <button id="upload-prediction-btn">Upload Prediction Dataset</button>
+      <div id="prediction-info" class="session-info hidden">
+        ✓ Prediction dataset uploaded
+      </div>
+    </div>
+
     <!-- Analysis Section -->
     <div id="analysis-section" class="section hidden">
       <h2>2. Analyze Bias</h2>
+
+      <div class="row">
+        <div class="col">
+          <div class="form-group">
+            <label for="detection-type">Detection Type:</label>
+            <select id="detection-type">
+              <option value="Dataset Bias Detection">Dataset Bias Detection</option>
+              <option value="Model Bias Detection">Model Bias Detection</option>
+            </select>
+          </div>
+        </div>
+      </div>
 
       <div class="row">
         <div class="col">
@@ -58,21 +122,22 @@
         <div class="col">
           <div class="form-group">
             <label for="priv-val">Privileged Value:</label>
-            <input type="text" id="priv-val" placeholder="e.g., 1">
+            <select id="priv-val"></select>
           </div>
         </div>
         <div class="col">
           <div class="form-group">
             <label for="unpriv-val">Unprivileged Value:</label>
-            <input type="text" id="unpriv-val" placeholder="e.g., 0">
+            <select id="unpriv-val"></select>
           </div>
         </div>
       </div>
 
       <div class="form-group">
-        <label for="metrics">Metrics (comma-separated):</label>
-        <input type="text" id="metrics" value="disparate_impact,statistical_parity_difference">
-        <p class="muted">Available metrics: disparate_impact, statistical_parity_difference, consistency</p>
+        <label>Select Metrics:</label>
+        <div id="metrics-container" class="metrics-grid">
+          <!-- Metrics checkboxes will be populated here -->
+        </div>
       </div>
 
       <button id="analyze-btn">Run Analysis</button>
@@ -81,7 +146,22 @@
       <div id="analysis-results" class="hidden">
         <h3>Analysis Results</h3>
         <div class="result-box">
-          <pre id="results-json"></pre>
+          <pre id="results-json" style="max-height: 200px; overflow-y: auto; display: none;"></pre> <!-- Hidden by default, maybe toggleable? Or just show charts -->
+          
+          <!-- Visualizations -->
+          <div class="row">
+            <div class="col">
+               <div id="viz-group-distribution"></div>
+            </div>
+            <div class="col">
+               <div id="viz-fairness-dashboard"></div>
+            </div>
+          </div>
+          
+          <div id="viz-metric-comparison" style="margin-top: 20px;"></div>
+          
+          <h4 style="margin-top: 30px;">Detailed Metrics</h4>
+          <div id="viz-detailed-metrics" class="metrics-grid"></div>
         </div>
 
         <div id="suggestion-box" class="suggestion-box hidden">
@@ -118,7 +198,12 @@
       <div id="mitigation-results" class="hidden">
         <h3>Mitigation Results</h3>
         <div class="result-box">
-          <pre id="mitigation-json"></pre>
+          <div id="viz-mitigation-comparison"></div>
+          
+          <div style="margin-top: 20px;">
+             <h4>Raw Results (JSON)</h4>
+             <pre id="mitigation-json" style="max-height: 200px; overflow-y: auto;"></pre>
+          </div>
         </div>
       </div>
 
@@ -134,16 +219,12 @@
     </div>
 
     <!-- Footer -->
-    <div class="muted" style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-      <p>
-        <strong>Note:</strong> This frontend can be deployed as a static site on GitHub Pages.
-        Make sure your Flask backend is running and CORS is enabled.
-      </p>
-    </div>
+
   </div>
 
   <!-- Load JavaScript -->
   <script src="js/api.js"></script>
+  <script src="js/visualization.js"></script>
   <script src="js/app.js"></script>
 
   <script>

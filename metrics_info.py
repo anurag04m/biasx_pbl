@@ -3,21 +3,21 @@ Comprehensive information about AIF360 fairness metrics
 """
 
 DATASET_METRICS = {
-    'statistical_parity_difference': {
-        'name': 'Statistical Parity Difference',
-        'description': 'Measures the difference in selection rates between unprivileged and privileged groups.',
-        'formula': 'P(Ŷ=1|D=unprivileged) - P(Ŷ=1|D=privileged)',
+    'selection_rate': {
+        'name': 'Selection Rate (Statistical Parity Difference)',
+        'description': 'Difference in selection rates between unprivileged and privileged groups. Also known as Statistical Parity Difference (SPD).',
+        'formula': 'P(Y=1|D=unprivileged) - P(Y=1|D=privileged)',
         'ideal_value': '0 (no difference)',
-        'interpretation': 'A value close to 0 indicates fairness. Negative values indicate the unprivileged group has lower selection rate. Positive values indicate the privileged group has lower selection rate.',
+        'interpretation': 'A value close to 0 indicates similar selection rates across groups. Use this to quickly assess group-level disparities in labels.',
         'threshold': {'min': -0.1, 'max': 0.1},
         'type': 'dataset'
     },
-    'disparate_impact': {
-        'name': 'Disparate Impact',
-        'description': 'Ratio of selection rates between unprivileged and privileged groups. The "80% rule" suggests values should be between 0.8 and 1.25.',
-        'formula': 'P(Ŷ=1|D=unprivileged) / P(Ŷ=1|D=privileged)',
+    'positive_rate_ratio': {
+        'name': 'Positive Rate Ratio (Disparate Impact)',
+        'description': 'Ratio of selection rates between unprivileged and privileged groups. Also known as Disparate Impact (DI). The "80% rule" suggests values should be between 0.8 and 1.25.',
+        'formula': 'P(Y=1|D=unprivileged) / P(Y=1|D=privileged)',
         'ideal_value': '1.0 (equal rates)',
-        'interpretation': 'Values between 0.8 and 1.25 are generally considered fair. Values < 0.8 indicate discrimination against unprivileged group. Values > 1.25 indicate discrimination against privileged group.',
+        'interpretation': 'Values between 0.8 and 1.25 are commonly considered acceptable. Values outside this range indicate potential disparate impact.',
         'threshold': {'min': 0.8, 'max': 1.25},
         'type': 'dataset'
     },
@@ -38,29 +38,19 @@ DATASET_METRICS = {
         'interpretation': 'Large differences in base rates between groups may indicate underlying bias in the data.',
         'threshold': {'min': -0.1, 'max': 0.1},
         'type': 'dataset'
-    },
-    # Additional dataset-level metrics
-    'selection_rate': {
-        'name': 'Selection Rate (Statistical Parity)',
-        'description': 'Difference in selection rates between unprivileged and privileged groups (same as Statistical Parity Difference).',
-        'formula': 'P(Y=1|D=unprivileged) - P(Y=1|D=privileged)',
-        'ideal_value': '0 (no difference)',
-        'interpretation': 'A value close to 0 indicates similar selection rates across groups. Use this to quickly assess group-level disparities in labels.',
-        'threshold': {'min': -0.1, 'max': 0.1},
-        'type': 'dataset'
-    },
-    'positive_rate_ratio': {
-        'name': 'Positive Rate Ratio (Disparate Impact Ratio)',
-        'description': 'Ratio of selection rates between unprivileged and privileged groups (alternate name for Disparate Impact). Often used with the 80% rule.',
-        'formula': 'P(Y=1|D=unprivileged) / P(Y=1|D=privileged)',
-        'ideal_value': '1.0 (equal rates)',
-        'interpretation': 'Values between 0.8 and 1.25 are commonly considered acceptable. Values outside this range indicate potential disparate impact.',
-        'threshold': {'min': 0.8, 'max': 1.25},
-        'type': 'dataset'
     }
 }
 
 CLASSIFICATION_METRICS = {
+    'selection_rate_difference': {
+        'name': 'Selection Rate Difference (Statistical Parity Difference)',
+        'description': 'Difference in predicted positive (selection) rates between groups. Also known as Statistical Parity Difference (SPD) for predictions.',
+        'formula': 'P(Ŷ=1|D=unprivileged) - P(Ŷ=1|D=privileged)',
+        'ideal_value': '0 (no difference)',
+        'interpretation': 'A value close to 0 indicates similar selection rates in predictions between groups.',
+        'threshold': {'min': -0.1, 'max': 0.1},
+        'type': 'classification'
+    },
     'equal_opportunity_difference': {
         'name': 'Equal Opportunity Difference',
         'description': 'Difference in True Positive Rates (TPR) between groups. Ensures both groups have equal chance of favorable outcomes when they should receive them.',
@@ -77,24 +67,6 @@ CLASSIFICATION_METRICS = {
         'ideal_value': '0 (equal odds)',
         'interpretation': 'Value close to 0 indicates fair predictions. Accounts for both true positives and false positives across groups.',
         'threshold': {'min': -0.1, 'max': 0.1},
-        'type': 'classification'
-    },
-    'statistical_parity_difference': {
-        'name': 'Statistical Parity Difference (Predictions)',
-        'description': 'Difference in predicted positive rates between groups. Similar to dataset metric but for model predictions.',
-        'formula': 'P(Ŷ=1|D=unprivileged) - P(Ŷ=1|D=privileged)',
-        'ideal_value': '0 (no difference)',
-        'interpretation': 'A value close to 0 indicates fair prediction rates. Negative values indicate unprivileged group receives fewer positive predictions.',
-        'threshold': {'min': -0.1, 'max': 0.1},
-        'type': 'classification'
-    },
-    'disparate_impact': {
-        'name': 'Disparate Impact (Predictions)',
-        'description': 'Ratio of predicted positive rates between groups. "80% rule" applies here too.',
-        'formula': 'P(Ŷ=1|D=unprivileged) / P(Ŷ=1|D=privileged)',
-        'ideal_value': '1.0 (equal rates)',
-        'interpretation': 'Values between 0.8 and 1.25 are generally fair. Values outside this range indicate discriminatory predictions.',
-        'threshold': {'min': 0.8, 'max': 1.25},
         'type': 'classification'
     },
     'false_positive_rate_difference': {
@@ -151,23 +123,12 @@ CLASSIFICATION_METRICS = {
         'threshold': {'min': 0, 'max': 0.1},
         'type': 'classification'
     },
-
-    # New metrics added below
     'predictive_parity_difference': {
         'name': 'Predictive Parity Difference',
         'description': 'Difference in Positive Predictive Value (precision) between unprivileged and privileged groups.',
         'formula': 'PPV_unprivileged - PPV_privileged',
         'ideal_value': '0 (equal PPV)',
         'interpretation': 'A value close to 0 indicates predictive parity. Negative values indicate unprivileged group has lower precision.',
-        'threshold': {'min': -0.1, 'max': 0.1},
-        'type': 'classification'
-    },
-    'selection_rate_difference': {
-        'name': 'Selection Rate Difference (Predictions)',
-        'description': 'Difference in predicted positive (selection) rates between groups (prediction-level statistical parity).',
-        'formula': 'P(Ŷ=1|D=unprivileged) - P(Ŷ=1|D=privileged)',
-        'ideal_value': '0 (no difference)',
-        'interpretation': 'A value close to 0 indicates similar selection rates in predictions between groups.',
         'threshold': {'min': -0.1, 'max': 0.1},
         'type': 'classification'
     },

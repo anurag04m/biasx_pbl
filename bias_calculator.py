@@ -115,17 +115,45 @@ class BiasDetector:
         # Prepare AIF360 datasets
         self._prepare_aif360_datasets()
 
-    def _validate_inputs(self) -> None:
-        """Validate presence of required columns and basic sanity checks."""
+    def _validate_inputs(self):
+        """Validate inputs before processing"""
         if self.protected_attr not in self.dataset.columns:
             raise ValueError(f"Protected attribute '{self.protected_attr}' not found in dataset")
         if self.label_column not in self.dataset.columns:
             raise ValueError(f"Label column '{self.label_column}' not found in dataset")
+
+        # Convert privileged/unprivileged values to match the dtype of the protected attribute column
+        # This handles cases where values come as strings from web forms but dataset has integers
+        col_dtype = self.dataset[self.protected_attr].dtype
+        try:
+            if col_dtype in ['int64', 'int32', 'int16', 'int8']:
+                self.privileged_value = int(self.privileged_value)
+                self.unprivileged_value = int(self.unprivileged_value)
+            elif col_dtype in ['float64', 'float32', 'float16']:
+                self.privileged_value = float(self.privileged_value)
+                self.unprivileged_value = float(self.unprivileged_value)
+            # For object/string types, keep as-is or convert to string
+            elif col_dtype == 'object':
+                # Try to match the type of existing values
+                sample_val = self.dataset[self.protected_attr].dropna().iloc[0] if len(self.dataset[self.protected_attr].dropna()) > 0 else None
+                if sample_val is not None:
+                    if isinstance(sample_val, (int, np.integer)):
+                        self.privileged_value = int(self.privileged_value)
+                        self.unprivileged_value = int(self.unprivileged_value)
+                    elif isinstance(sample_val, (float, np.floating)):
+                        self.privileged_value = float(self.privileged_value)
+                        self.unprivileged_value = float(self.unprivileged_value)
+                    else:
+                        self.privileged_value = str(self.privileged_value)
+                        self.unprivileged_value = str(self.unprivileged_value)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Could not convert privileged/unprivileged values to match column dtype {col_dtype}: {e}")
+
         # Check that privileged and unprivileged groups exist
         if self.privileged_value not in self.dataset[self.protected_attr].unique():
-            raise ValueError("Privileged value not found in protected attribute column")
+            raise ValueError(f"Privileged value {self.privileged_value} (type: {type(self.privileged_value)}) not found in protected attribute column. Available values: {self.dataset[self.protected_attr].unique()}")
         if self.unprivileged_value not in self.dataset[self.protected_attr].unique():
-            raise ValueError("Unprivileged value not found in protected attribute column")
+            raise ValueError(f"Unprivileged value {self.unprivileged_value} (type: {type(self.unprivileged_value)}) not found in protected attribute column. Available values: {self.dataset[self.protected_attr].unique()}")
         # Basic label sanity: ensure binary-like labels (0/1 or boolean). Apply label_mapping if provided.
         if self.label_mapping is not None:
             # Map values using provided mapping. Values not in mapping will become NaN.
@@ -342,7 +370,8 @@ class BiasDetector:
         """Calculate classification-level fairness metrics using aif360 ClassificationMetric"""
         # Map known metric keys to ClassificationMetric methods
         try:
-            if metric_key == 'statistical_parity_difference':
+            if metric_key == 'statistical_parity_difference' or metric_key == 'selection_rate_difference':
+                # Both are aliases for the same metric
                 return metric_obj.statistical_parity_difference()
             elif metric_key == 'disparate_impact':
                 return metric_obj.disparate_impact()
@@ -568,46 +597,118 @@ class BiasDetector:
             return out_df
 
         elif method == 'optimized_preprocessing':
-            # Use a simple heuristic-based Optimized Preprocessing if AIF360's implementation is not available
-            # This function uses the heuristic provided by the user (flip some negative labels from disadvantaged group)
-            def simple_optimized_preprocessing(df, label_col, protected_col, target_parity=0.0, random_state=None):
-                df = df.copy()
-                if random_state is not None:
-                    # shuffle deterministically but avoid bringing old index in as a column
-                    df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
+            # "Smart Boundary Flipping" (Preferential Sampling)
+            # Instead of random flipping, use a ranker to flip candidates closest to the decision boundary.
+            
+            # Try to import sklearn
+            try:
+                from sklearn.linear_model import LogisticRegression
+                from sklearn.preprocessing import StandardScaler
+            except ImportError:
+                # Fallback to the old random heuristic if sklearn is missing
+                print("[WARNING] sklearn not found. Falling back to simple random heuristic.")
+                return self._simple_random_preprocessing(kwargs)
 
-                groups = df[protected_col].unique()
-                if len(groups) != 2:
-                    # fallback: return original
-                    return df
-                g0, g1 = groups
+            def preferential_sampling(df, label_col, protected_col, privileged_val, unprivileged_val):
+                df_mod = df.copy()
+                
+                # 1. Train a Ranker (Logistic Regression) on the original data
+                # We use all features EXCEPT protected attribute (to find "qualified" individuals regardless of group)
+                # Ideally, we should encode categorical features, but for this drop-in replacement,
+                # we'll stick to numeric features to avoid complex pipeline building.
+                # If the dataset is mostly categorical, this might be weak, but it's better than random.
+                
+                numeric_cols = df_mod.select_dtypes(include=[np.number]).columns.tolist()
+                features = [c for c in numeric_cols if c != label_col and c != protected_col]
+                
+                if not features:
+                     # No numeric features to train on? Fallback to random.
+                     print("[WARNING] No numeric features for ranking. Falling back to random.")
+                     return self._simple_random_preprocessing(kwargs)
 
-                rate0 = df[df[protected_col] == g0][label_col].mean()
-                rate1 = df[df[protected_col] == g1][label_col].mean()
+                X = df_mod[features].fillna(0) # Simple imputation
+                y = df_mod[label_col]
+                
+                # Train ranker
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(X)
+                clf = LogisticRegression(solver='liblinear', random_state=42)
+                clf.fit(X_scaled, y)
+                
+                # Get scores (probabilities of Y=1)
+                probs = clf.predict_proba(X_scaled)[:, 1]
+                df_mod['__rank_score__'] = probs
+                
+                # 2. Calculate Exact Number of Flips Needed
+                # Goal: Statistical Parity Difference = 0
+                # P(Y=1 | Priv) = P(Y=1 | Unpriv)
+                
+                priv_mask = df_mod[protected_col] == privileged_val
+                unpriv_mask = df_mod[protected_col] == unprivileged_val
+                
+                n_priv = priv_mask.sum()
+                n_unpriv = unpriv_mask.sum()
+                
+                # Current positive rates
+                p_priv = df_mod[priv_mask][label_col].mean()
+                p_unpriv = df_mod[unpriv_mask][label_col].mean()
+                
+                # Target rate (weighted average / overall base rate)
+                p_target = df_mod[label_col].mean()
+                
+                # Calculate required positives for each group to meet p_target
+                # For unprivileged (usually needs more positives)
+                target_pos_unpriv = int(n_unpriv * p_target)
+                current_pos_unpriv = df_mod[unpriv_mask][label_col].sum()
+                diff_unpriv = target_pos_unpriv - current_pos_unpriv
+                
+                # For privileged (usually needs fewer positives)
+                target_pos_priv = int(n_priv * p_target)
+                current_pos_priv = df_mod[priv_mask][label_col].sum()
+                diff_priv = target_pos_priv - current_pos_priv
+                
+                print(f"[MITIGATION] Smart Flip Analysis:")
+                print(f"  - Unprivileged: Current Pos={current_pos_unpriv}, Target={target_pos_unpriv}, Diff={diff_unpriv}")
+                print(f"  - Privileged:   Current Pos={current_pos_priv}, Target={target_pos_priv}, Diff={diff_priv}")
 
-                if rate0 > rate1:
-                    disadvantaged = g1
-                else:
-                    disadvantaged = g0
+                # 3. Apply Flips (Preferential Sampling)
+                
+                # CASE A: Unprivileged group needs MORE positives (Promotion)
+                if diff_unpriv > 0:
+                    # Find negatives (Y=0) with HIGHEST scores (closest to boundary)
+                    candidates = df_mod[unpriv_mask & (df_mod[label_col] == 0)]
+                    n_flip = int(min(diff_unpriv, len(candidates)))
+                    if n_flip > 0:
+                        flip_indices = candidates.sort_values('__rank_score__', ascending=False).head(n_flip).index
+                        df_mod.loc[flip_indices, label_col] = 1
+                        print(f"  -> Promoted {len(flip_indices)} unprivileged candidates (Best of the rejected)")
 
-                # Find negative samples to flip
-                candidates = df[(df[protected_col] == disadvantaged) & (df[label_col] == 0)].copy()
+                # CASE B: Privileged group needs FEWER positives (Demotion)
+                # Note: `diff_priv` will be negative if we need to reduce positives
+                if diff_priv < 0:
+                    # Find positives (Y=1) with LOWEST scores (closest to boundary)
+                    candidates = df_mod[priv_mask & (df_mod[label_col] == 1)]
+                    n_flip = int(min(abs(diff_priv), len(candidates)))
+                    if n_flip > 0:
+                        flip_indices = candidates.sort_values('__rank_score__', ascending=True).head(n_flip).index
+                        df_mod.loc[flip_indices, label_col] = 0
+                        print(f"  -> Demoted {len(flip_indices)} privileged candidates (Worst of the accepted)")
+                
+                df_mod.drop(columns=['__rank_score__'], inplace=True)
+                return df_mod
 
-                # Number to flip
-                gap = abs(rate0 - rate1)
-                flips = int(gap * len(df))
+            # Internal helper map
+            priv_val = 1
+            unpriv_val = 0
+            
+            out_df = preferential_sampling(
+                self._filtered_df.copy(), 
+                self.label_column, 
+                self.protected_attr, 
+                priv_val, 
+                unpriv_val
+            )
 
-                if len(candidates) == 0 or flips <= 0:
-                    return df
-
-                flip_idx = candidates.sample(min(flips, len(candidates)), random_state=random_state).index
-                df.loc[flip_idx, label_col] = 1
-
-                return df
-
-            target_parity = float(kwargs.get('target_parity', 0.0))
-            random_state = kwargs.get('random_state', None)
-            out_df = simple_optimized_preprocessing(self._filtered_df.copy(), self.label_column, self.protected_attr, target_parity=target_parity, random_state=random_state)
             # restore original protected attribute values
             try:
                 if hasattr(self, '_filtered_original') and self.protected_attr in self._filtered_original.columns:
@@ -615,3 +716,44 @@ class BiasDetector:
             except Exception:
                 pass
             return out_df
+
+    def _simple_random_preprocessing(self, kwargs):
+        """Fallback: Simple random preprocessing if sklearn is missing"""
+        def simple_heuristic(df, label_col, protected_col, random_state=None):
+            df = df.copy()
+            if random_state is not None:
+                df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
+
+            groups = df[protected_col].unique()
+            if len(groups) != 2:
+                return df
+            g0, g1 = groups
+
+            rate0 = df[df[protected_col] == g0][label_col].mean()
+            rate1 = df[df[protected_col] == g1][label_col].mean()
+
+            if rate0 > rate1:
+                disadvantaged = g1
+            else:
+                disadvantaged = g0
+
+            candidates = df[(df[protected_col] == disadvantaged) & (df[label_col] == 0)].copy()
+            gap = abs(rate0 - rate1)
+            flips = int(gap * len(df) * 0.5) # Heuristic factor
+
+            if len(candidates) == 0 or flips <= 0:
+                return df
+
+            flip_idx = candidates.sample(min(flips, len(candidates)), random_state=random_state).index
+            df.loc[flip_idx, label_col] = 1
+            return df
+
+        random_state = kwargs.get('random_state', None)
+        out_df = simple_heuristic(self._filtered_df.copy(), self.label_column, self.protected_attr, random_state=random_state)
+        try:
+            if hasattr(self, '_filtered_original') and self.protected_attr in self._filtered_original.columns:
+                out_df[self.protected_attr] = self._filtered_original[self.protected_attr].values
+        except Exception:
+            pass
+        return out_df
+
