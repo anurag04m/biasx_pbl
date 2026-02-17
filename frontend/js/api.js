@@ -134,22 +134,48 @@ const Utils = {
     let severity = 0; // 0=low, 1=medium, 2=high
     const reasons = [];
 
-    // Check disparate_impact
-    if (results.metrics.disparate_impact) {
+    // Check positive_rate_ratio (formerly disparate_impact)
+    if (results.metrics.positive_rate_ratio) {
+      const val = results.metrics.positive_rate_ratio.value;
+      if (val !== null && !isNaN(val)) {
+        if (val < 0.8) {
+          severity = Math.max(severity, 2);
+          reasons.push(`Positive Rate Ratio ${val.toFixed(3)} < 0.8 (strong bias)`);
+        } else if (val < 0.9) {
+          severity = Math.max(severity, 1);
+          reasons.push(`Positive Rate Ratio ${val.toFixed(3)} between 0.8-0.9 (moderate bias)`);
+        }
+      }
+    }
+    // Fallback to old name if present
+    else if (results.metrics.disparate_impact) {
       const val = results.metrics.disparate_impact.value;
       if (val !== null && !isNaN(val)) {
         if (val < 0.8) {
           severity = Math.max(severity, 2);
-          reasons.push(`Disparate impact ${val.toFixed(3)} < 0.8 (strong bias)`);
+          reasons.push(`Disparate Impact ${val.toFixed(3)} < 0.8 (strong bias)`);
         } else if (val < 0.9) {
           severity = Math.max(severity, 1);
-          reasons.push(`Disparate impact ${val.toFixed(3)} between 0.8-0.9 (moderate bias)`);
+          reasons.push(`Disparate Impact ${val.toFixed(3)} between 0.8-0.9 (moderate bias)`);
         }
       }
     }
 
-    // Check statistical_parity_difference
-    if (results.metrics.statistical_parity_difference) {
+    // Check selection_rate (formerly statistical_parity_difference)
+    if (results.metrics.selection_rate) {
+      const val = Math.abs(results.metrics.selection_rate.value);
+      if (val !== null && !isNaN(val)) {
+        if (val > 0.2) {
+          severity = Math.max(severity, 2);
+          reasons.push(`Selection Rate difference ${val.toFixed(3)} > 0.2 (strong bias)`);
+        } else if (val > 0.1) {
+          severity = Math.max(severity, 1);
+          reasons.push(`Selection Rate difference ${val.toFixed(3)} > 0.1 (moderate bias)`);
+        }
+      }
+    }
+    // Fallback to old name if present
+    else if (results.metrics.statistical_parity_difference) {
       const val = Math.abs(results.metrics.statistical_parity_difference.value);
       if (val !== null && !isNaN(val)) {
         if (val > 0.2) {

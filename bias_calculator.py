@@ -370,7 +370,8 @@ class BiasDetector:
         """Calculate classification-level fairness metrics using aif360 ClassificationMetric"""
         # Map known metric keys to ClassificationMetric methods
         try:
-            if metric_key == 'statistical_parity_difference':
+            if metric_key == 'statistical_parity_difference' or metric_key == 'selection_rate_difference':
+                # Both are aliases for the same metric
                 return metric_obj.statistical_parity_difference()
             elif metric_key == 'disparate_impact':
                 return metric_obj.disparate_impact()
