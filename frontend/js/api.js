@@ -3,35 +3,41 @@
 const API = {
   // Get the API base URL - defaults to localhost:5000 but can be overridden via URL param
   getBaseUrl() {
-    // allow explicit override via ?api= param
+    // 1. Check URL param ?api=
     try {
       const params = new URLSearchParams(window.location.search);
       const apiParam = params.get('api');
       if (apiParam) {
+        localStorage.setItem('biasx_api_url', apiParam);
         return apiParam.replace(/\/+$|\/$/, '').replace(/\s+/g, '');
       }
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) { }
 
-    // Determine a sensible default. If the page is served over http/https use same host with port 5000.
-    // If the page is opened via file:// (or other non-http protocols) fall back to http://localhost:5000
+    // 2. Check localStorage
+    const saved = localStorage.getItem('biasx_api_url');
+    if (saved) return saved;
+
+    // 3. Sensible defaults
     try {
       const loc = window.location;
-      const protocol = (loc && loc.protocol) ? loc.protocol : null;
-      const hostname = (loc && loc.hostname) ? loc.hostname : null;
+      const hostname = loc.hostname;
 
-      if (protocol === 'http:' || protocol === 'https:') {
-        // If hostname is empty (rare), fallback to localhost
-        const host = hostname && hostname.length ? hostname : 'localhost';
-        return `${protocol}//${host}:5000`;
+      // If we are on localhost, use the current protocol (usually http)
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '') {
+        return `${loc.protocol}//localhost:5000`;
       }
-    } catch (e) {
-      // ignore and fallback
-    }
+    } catch (e) { }
 
-    // Default fallback for file:// or unknown contexts
+    // Default fallback for GitHub Pages or other hosting
+    // We default to http://localhost:5000 as that's where the backend usually is
     return 'http://localhost:5000';
+  },
+
+  setBaseUrl(url) {
+    if (url) {
+      localStorage.setItem('biasx_api_url', url.replace(/\/+$|\/$/, '').replace(/\s+/g, ''));
+      window.location.reload();
+    }
   },
 
   // Make an API request
