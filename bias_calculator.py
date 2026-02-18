@@ -78,9 +78,15 @@ class BiasDetector:
                 if self.pred_label_col is None and self.pred_proba_col is not None and self.pred_proba_col in merged.columns:
                     merged[self.label_column + '_pred'] = (merged[self.pred_proba_col] >= self.proba_threshold).astype(int)
                     self.pred_label_col = self.label_column + '_pred'
-                # If pred_label_col specified and exists, ensure it's available under the expected name
-                elif self.pred_label_col is not None and self.pred_label_col in merged.columns:
-                    pass
+                # If pred_label_col specified and exists, handle suffix collision
+                elif self.pred_label_col is not None:
+                    # If user specified pred_label_col and it collided with original label during merge,
+                    # pandas would have added '_pred' suffix to it
+                    if self.pred_label_col == self.label_column and (self.pred_label_col + '_pred') in merged.columns:
+                        # User's prediction column had same name as label; use the _pred version
+                        self.pred_label_col = self.label_column + '_pred'
+                    elif self.pred_label_col not in merged.columns:
+                        raise ValueError(f"Predicted label column '{self.pred_label_col}' not found in merged dataset. Available columns: {list(merged.columns)}")
                 else:
                     # Try to infer predicted label column in dataset_pred
                     possible = [c for c in merged.columns if c.lower() in (self.label_column.lower(), 'y_pred', 'pred', 'prediction')]
@@ -100,9 +106,61 @@ class BiasDetector:
                     if possible:
                         self.pred_label_col = possible[0]
 
+                # If prediction DataFrame doesn't contain the protected attribute or original label,
+                # try to align by index with the original dataset (common case: prediction CSV only has y_pred/y_proba rows)
+                if (self.protected_attr not in self.dataset_pred.columns) or (self.label_column not in self.dataset_pred.columns):
+                    # If lengths match, perform a safe index-based join to bring the protected attribute and label from original dataset
+                    if len(self.dataset_pred) == len(self.dataset):
+                        # Use lsuffix/rsuffix to handle column name collisions during join
+                        merged_idx = self.dataset[[self.protected_attr, self.label_column]].reset_index(drop=True).join(
+                            self.dataset_pred.reset_index(drop=True),
+                            lsuffix='_orig',
+                            rsuffix='_pred'
+                        )
+                        self.dataset_pred = merged_idx
+
+                        # Handle collision: if pred_label_col had same name as label_column, pandas added suffix
+                        if self.pred_label_col is not None:
+                            if self.pred_label_col == self.label_column and (self.pred_label_col + '_pred') in self.dataset_pred.columns:
+                                # Collision happened; use the suffixed version
+                                self.pred_label_col = self.label_column + '_pred'
+                            elif self.pred_label_col not in self.dataset_pred.columns and (self.pred_label_col + '_pred') in self.dataset_pred.columns:
+                                # Column got suffixed during join
+                                self.pred_label_col = self.pred_label_col + '_pred'
+
+                        # Re-infer if still None after join
+                        if self.pred_label_col is None:
+                            possible = [c for c in self.dataset_pred.columns if c.lower() in (self.label_column.lower(), 'y_pred', 'pred', 'prediction') and not c.endswith('_orig')]
+                            if possible:
+                                self.pred_label_col = possible[0]
+                    else:
+                        # Can't safely align predictions — raise helpful error so frontend can report it
+                        raise ValueError("Prediction dataset appears unaligned with original dataset: no id_column provided and row counts differ. Provide an 'id_column' or ensure prediction file aligns with original data by row order.")
+
             # After ensuring pred_label_col exists, apply optional mapping to predicted labels
             if self.pred_label_col is None or self.pred_label_col not in self.dataset_pred.columns:
                 raise ValueError('Predicted labels not found or could not be inferred. Provide `pred_label_col` or `pred_proba_col`.')
+
+            # CRITICAL: Ensure pred_label_col is NOT the same as label_column (unless we haven't joined yet)
+            # If they're the same and dataset_pred wasn't joined with ground truth data, we have a problem
+            if self.pred_label_col == self.label_column:
+                # Check if we have separate _orig and _pred versions (from a successful join)
+                has_orig = (self.label_column + '_orig') in self.dataset_pred.columns
+                has_pred = (self.label_column + '_pred') in self.dataset_pred.columns
+
+                if has_orig and has_pred:
+                    # Good! Join created proper suffixes. Use the _pred version for predictions
+                    self.pred_label_col = self.label_column + '_pred'
+                    # And ensure label_column points to _orig for ground truth (we'll handle this in _prepare_aif360_datasets)
+                else:
+                    # BAD! Same column name for both ground truth and predictions
+                    raise ValueError(
+                        f"Prediction column name '{self.pred_label_col}' is the same as the ground truth label column '{self.label_column}'. "
+                        f"This means predictions and ground truth would be identical, making bias metrics meaningless. "
+                        f"Your prediction CSV should either: "
+                        f"(1) Use a different column name for predictions (e.g., 'y_pred', 'predicted_{self.label_column}'), OR "
+                        f"(2) Only contain prediction columns without the ground truth label (we'll auto-align by row order)."
+                    )
 
             # If user provided a label_mapping, map predicted labels on dataset_pred
             if self.label_mapping is not None:
@@ -180,8 +238,18 @@ class BiasDetector:
         # If we have merged predictions, use that as source to ensure alignment
         if self.detection_type == "Model Bias Detection" and self.dataset_pred is not None:
             source_df = self.dataset_pred.copy()
+
+            # After alignment/join, we might have _orig and _pred suffixed columns
+            # For ground truth, ensure we use the _orig version if it exists
+            ground_truth_label_col = self.label_column
+            if (self.label_column + '_orig') in source_df.columns:
+                # Join created _orig suffix for ground truth; use it
+                ground_truth_label_col = self.label_column + '_orig'
+            elif self.label_column not in source_df.columns:
+                raise ValueError(f"Ground truth label column '{self.label_column}' not found in aligned dataset. Available: {list(source_df.columns)}")
         else:
             source_df = self.dataset.copy()
+            ground_truth_label_col = self.label_column
 
         # Filter to only privileged and unprivileged groups
         mask = source_df[self.protected_attr].isin([self.privileged_value, self.unprivileged_value])
@@ -194,6 +262,29 @@ class BiasDetector:
         # Map protected attribute to 1 (privileged) and 0 (unprivileged)
         mapping = {self.privileged_value: 1, self.unprivileged_value: 0}
         filtered_df[self.protected_attr] = filtered_df[self.protected_attr].map(mapping)
+
+        # For Model Bias Detection, prepare a clean ground truth dataframe with standard column names
+        # (AIF360 requires identical structure except for labels)
+        if self.detection_type == "Model Bias Detection" and self.dataset_pred is not None:
+            # BEFORE cleaning, extract the prediction values (we'll need them later)
+            if self.pred_label_col not in filtered_df.columns:
+                raise ValueError(f"Predicted column '{self.pred_label_col}' not found in filtered dataset. Available: {list(filtered_df.columns)}")
+            prediction_values = filtered_df[self.pred_label_col].values
+
+            # Create a clean dataframe with only necessary columns and standard names
+            # Start with core features (drop all _orig and _pred suffixed columns)
+            core_cols = [col for col in filtered_df.columns if not (col.endswith('_orig') or col.endswith('_pred'))]
+            clean_df = filtered_df[core_cols].copy()
+
+            # Add the ground truth label with standard name
+            clean_df[self.label_column] = filtered_df[ground_truth_label_col].values
+
+            # Store predictions separately so we can use them when creating prediction dataset
+            self._prediction_values = prediction_values
+
+            # Store this as the base for both datasets
+            filtered_df = clean_df
+            self._filtered_original = filtered_df.copy()  # Update the unmapped copy
 
         # 1. Ground Truth Dataset (aif_dataset)
         self.aif_dataset = BinaryLabelDataset(
@@ -224,15 +315,18 @@ class BiasDetector:
         # 2. Predictions Dataset (aif_dataset_pred)
         self.aif_dataset_pred = None
         if self.detection_type == "Model Bias Detection" and self.dataset_pred is not None:
-            # We create a copy of filtered_df but replace labels with predictions
+            # CRITICAL: AIF360's ClassificationMetric requires ground truth and prediction datasets
+            # to have IDENTICAL structure (same features, same columns, same order) and differ ONLY in labels.
+            # We create a copy of filtered_df and replace ONLY the label column with predictions.
+
             df_pred = filtered_df.copy()
 
-            # self.pred_label_col should exist in source_df (which is dataset_pred)
-            if self.pred_label_col not in df_pred.columns:
-                 raise ValueError(f"Predicted columns {self.pred_label_col} missing after alignment")
+            # Use the prediction values we stored earlier (before cleaning)
+            if not hasattr(self, '_prediction_values'):
+                raise ValueError("Prediction values were not stored during dataframe preparation")
 
-            # Set the label column to the predicted values
-            df_pred[self.label_column] = df_pred[df_pred.columns[df_pred.columns.get_loc(self.pred_label_col)]]
+            # Replace the label column with predicted values
+            df_pred[self.label_column] = self._prediction_values
 
             self.aif_dataset_pred = BinaryLabelDataset(
                 favorable_label=1,

@@ -12,7 +12,8 @@ from bias_calculator import BiasDetector
 from metrics_info import DATASET_METRICS, CLASSIFICATION_METRICS
 
 app = Flask(__name__)
-CORS(app)
+# Keep CORS but also add explicit headers and logging for OPTIONS
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Simple in-memory session store. For production replace with persistent store.
 SESSIONS = {}
@@ -110,7 +111,7 @@ def analyze():
     selected_metrics = payload['selected_metrics']
     detection_type = payload.get('detection_type', 'Dataset Bias Detection')
 
-    print(f"[ANALYZE] Config: protected_attr={protected_attr}, label={label_column}, priv={privileged_value}, unpriv={unprivileged_value}, metrics={selected_metrics}, type={detection_type}")
+    print(f"[ANALYZE] Config: protected_attr={protected_attr}, label={label_column}, privileged_value={privileged_value}, unprivileged_value={unprivileged_value}, metrics={selected_metrics}, type={detection_type}")
 
     # Optional dataset_pred (CSV string) for model bias detection
     dataset_pred = None
@@ -260,6 +261,30 @@ def download_dataset():
         mimetype='text/csv',
         headers={"Content-disposition": f"attachment; filename=dataset_{sid}.csv"}
     )
+
+@app.before_request
+def log_request_info():
+    print(f"[HTTP] {request.method} {request.path} Origin={request.headers.get('Origin')}")
+
+@app.after_request
+def add_cors_headers(response):
+    # Ensure CORS headers are present for all responses (useful for file:// and local testing)
+    response.headers.setdefault('Access-Control-Allow-Origin', '*')
+    response.headers.setdefault('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    response.headers.setdefault('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    return response
+
+# Handle OPTIONS globally for convenience
+@app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+@app.route('/<path:path>', methods=['OPTIONS'])
+def handle_options(path):
+    print(f"[HTTP] OPTIONS preflight for: /{path}")
+    resp = Response()
+    resp.status_code = 200
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    resp.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+    return resp
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

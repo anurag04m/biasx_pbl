@@ -1,5 +1,7 @@
 // API Configuration and Utilities
 
+const BACKEND_BASE_URL = 'http://127.0.0.1:5000'; // default used when page is opened via file:// or unspecified
+
 const API = {
   // Get the API base URL - defaults to localhost:5000 but can be overridden via URL param
   getBaseUrl() {
@@ -9,7 +11,7 @@ const API = {
       const apiParam = params.get('api');
       if (apiParam) {
         localStorage.setItem('biasx_api_url', apiParam);
-        return apiParam.replace(/\/+$|\/$/, '').replace(/\s+/g, '');
+        return apiParam.replace(/\/+$/g, '').replace(/\s+/g, '');
       }
     } catch (e) { }
 
@@ -17,25 +19,35 @@ const API = {
     const saved = localStorage.getItem('biasx_api_url');
     if (saved) return saved;
 
-    // 3. Sensible defaults
+    // 3. If opened via file:// or origin is null, default to BACKEND_BASE_URL
     try {
+      if (window.location && window.location.protocol === 'file:') {
+        return BACKEND_BASE_URL;
+      }
+      // Some browsers report origin as 'null' for file:// pages
+      if (window.location && (window.location.origin === 'null' || !window.location.origin)) {
+        // If hostname is empty but protocol is not file, still default to BACKEND_BASE_URL
+        if (window.location.protocol && window.location.protocol !== 'http:' && window.location.protocol !== 'https:') {
+          return BACKEND_BASE_URL;
+        }
+      }
+
       const loc = window.location;
       const hostname = loc.hostname;
 
-      // If we are on localhost, use the current protocol (usually http)
-      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '') {
+      // If we are on localhost, use that host with port 5000
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
         return `${loc.protocol}//localhost:5000`;
       }
     } catch (e) { }
 
     // Default fallback for GitHub Pages or other hosting
-    // We default to http://localhost:5000 as that's where the backend usually is
-    return 'http://localhost:5000';
+    return BACKEND_BASE_URL;
   },
 
   setBaseUrl(url) {
     if (url) {
-      localStorage.setItem('biasx_api_url', url.replace(/\/+$|\/$/, '').replace(/\s+/g, ''));
+      localStorage.setItem('biasx_api_url', url.replace(/\/+$/g, '').replace(/\s+/g, ''));
       window.location.reload();
     }
   },
@@ -43,7 +55,16 @@ const API = {
   // Make an API request
   async request(endpoint, options = {}) {
     const base = this.getBaseUrl();
-    const url = `${base}${endpoint}`;
+    let url;
+    try {
+      // Ensure we build an absolute URL (handles cases where endpoint is '/path' or 'path')
+      url = new URL(endpoint, base).toString();
+    } catch (e) {
+      // Fallback string concat if URL constructor fails
+      const cleanBase = String(base).replace(/\/+$/g, '');
+      const cleanEndpoint = String(endpoint).replace(/^\/+/, '');
+      url = `${cleanBase}/${cleanEndpoint}`;
+    }
 
     try {
       const response = await fetch(url, {
@@ -58,9 +79,14 @@ const API = {
         throw new Error(`API Error ${response.status}: ${text || response.statusText}`);
       }
 
-      return await response.json();
+      // Some endpoints return empty responses (like file downloads) — try JSON but fallback to text
+      const ct = response.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        return await response.json();
+      }
+      return await response.text();
     } catch (error) {
-      console.error('API Request failed:', error);
+      console.error('API Request failed:', { url, error });
       throw error;
     }
   },
@@ -107,7 +133,13 @@ const API = {
 
   // Get download URL
   getDownloadUrl(endpoint) {
-    return `${this.getBaseUrl()}${endpoint}`;
+    try {
+      return new URL(endpoint, this.getBaseUrl()).toString();
+    } catch (e) {
+      const cleanBase = String(this.getBaseUrl()).replace(/\/+$/g, '');
+      const cleanEndpoint = String(endpoint).replace(/^\/+/, '');
+      return `${cleanBase}/${cleanEndpoint}`;
+    }
   },
 };
 
