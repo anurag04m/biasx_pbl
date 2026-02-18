@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
   <link rel="stylesheet" href="css/styles.css">
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
+
 <body>
   <div class="container">
     <h1>🔍 Bias Detection Tool</h1>
@@ -18,8 +20,14 @@
     <div class="section">
       <h3>API Configuration</h3>
       <p class="muted">
-        Backend API: <strong id="api-url"></strong><br>
-        To use a different backend, add <code>?api=https://your-backend-url</code> to the page URL.
+        Backend API: <strong id="api-url"></strong>
+        <button id="change-api-btn" style="padding: 2px 8px; font-size: 11px; margin: 0 0 0 10px;">Change</button>
+        <br>
+        <span id="mixed-content-warning" class="hidden"
+          style="color: #e74c3c; font-size: 0.85em; display: block; margin-top: 5px;">
+          ⚠️ <strong>Note:</strong> Browsers block requests from HTTPS sites to HTTP backends (Mixed Content).
+          If you are on GitHub Pages, use an <strong>HTTPS</strong> tunnel (e.g. ngrok) or run the frontend locally.
+        </span>
       </p>
     </div>
 
@@ -146,20 +154,21 @@
       <div id="analysis-results" class="hidden">
         <h3>Analysis Results</h3>
         <div class="result-box">
-          <pre id="results-json" style="max-height: 200px; overflow-y: auto; display: none;"></pre> <!-- Hidden by default, maybe toggleable? Or just show charts -->
-          
+          <pre id="results-json" style="max-height: 200px; overflow-y: auto; display: none;"></pre>
+          <!-- Hidden by default, maybe toggleable? Or just show charts -->
+
           <!-- Visualizations -->
           <div class="row">
             <div class="col">
-               <div id="viz-group-distribution"></div>
+              <div id="viz-group-distribution"></div>
             </div>
             <div class="col">
-               <div id="viz-fairness-dashboard"></div>
+              <div id="viz-fairness-dashboard"></div>
             </div>
           </div>
-          
+
           <div id="viz-metric-comparison" style="margin-top: 20px;"></div>
-          
+
           <h4 style="margin-top: 30px;">Detailed Metrics</h4>
           <div id="viz-detailed-metrics" class="metrics-grid"></div>
         </div>
@@ -199,10 +208,10 @@
         <h3>Mitigation Results</h3>
         <div class="result-box">
           <div id="viz-mitigation-comparison"></div>
-          
+
           <div style="margin-top: 20px;">
-             <h4>Raw Results (JSON)</h4>
-             <pre id="mitigation-json" style="max-height: 200px; overflow-y: auto;"></pre>
+            <h4>Raw Results (JSON)</h4>
+            <pre id="mitigation-json" style="max-height: 200px; overflow-y: auto;"></pre>
           </div>
         </div>
       </div>
@@ -239,4 +248,5 @@
     });
   </script>
 </body>
+
 </html>

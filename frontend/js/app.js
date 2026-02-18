@@ -29,8 +29,18 @@ class BiasDetectionApp {
     // Bind file input change listener for prediction dataset
     document.getElementById('prediction-file').addEventListener('change', () => this.onPredictionFileSelected());
 
-    // Display current API URL
-    document.getElementById('api-url').textContent = API.getBaseUrl();
+    // Display current API URL and handle change
+    const apiUrl = API.getBaseUrl();
+    document.getElementById('api-url').textContent = apiUrl;
+    document.getElementById('change-api-btn').addEventListener('click', () => {
+      const newUrl = prompt('Enter Backend API URL (e.g. https://your-tunnel.ngrok.io):', apiUrl);
+      if (newUrl) API.setBaseUrl(newUrl);
+    });
+
+    // Show warning if on HTTPS but API is HTTP
+    if (window.location.protocol === 'https:' && apiUrl.startsWith('http:')) {
+      document.getElementById('mixed-content-warning').classList.remove('hidden');
+    }
 
     // Load metrics from backend
     await this.loadMetrics();
