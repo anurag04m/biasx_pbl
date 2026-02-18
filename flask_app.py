@@ -271,7 +271,7 @@ def add_cors_headers(response):
     # Ensure CORS headers are present for all responses (useful for file:// and local testing)
     response.headers.setdefault('Access-Control-Allow-Origin', '*')
     response.headers.setdefault('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
-    response.headers.setdefault('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.setdefault('Access-Control-Allow-Headers', 'Content-Type,Authorization,ngrok-skip-browser-warning')
     return response
 
 # Handle OPTIONS globally for convenience
@@ -283,7 +283,7 @@ def handle_options(path):
     resp.status_code = 200
     resp.headers['Access-Control-Allow-Origin'] = '*'
     resp.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
-    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,ngrok-skip-browser-warning'
     return resp
 
 if __name__ == '__main__':

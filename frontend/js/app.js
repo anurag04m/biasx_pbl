@@ -38,7 +38,7 @@ class BiasDetectionApp {
     });
 
     // Show warning if on HTTPS but API is HTTP
-    if (window.location.protocol === 'https:' && apiUrl.startsWith('http:')) {
+    if (window.location.protocol === 'https:' && apiUrl.startsWith('http://')) {
       document.getElementById('mixed-content-warning').classList.remove('hidden');
     }
 
@@ -49,11 +49,14 @@ class BiasDetectionApp {
   async loadMetrics() {
     try {
       const response = await API.getMetrics();
+      if (typeof response === 'string') {
+        throw new Error('Server returned HTML instead of JSON. Check your API URL and ngrok status.');
+      }
       this.metrics = response;
       console.log('Metrics loaded:', this.metrics);
     } catch (error) {
       console.error('Failed to load metrics:', error);
-      Utils.showError('Failed to load metrics from server');
+      Utils.showError('Failed to load metrics from server: ' + (error.message || error));
     }
   }
 
