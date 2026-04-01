@@ -33,6 +33,7 @@ class BiasDetectionApp {
     document.getElementById('protected-attr').addEventListener('change', () => this.onProtectedAttrChange());
     document.getElementById('priv-val').addEventListener('change', () => this.onPrivilegedValueChange());
     document.getElementById('detection-type').addEventListener('change', () => this.onDetectionTypeChange());
+    document.getElementById('model-input-mode').addEventListener('change', () => this.onModelInputModeChange());
 
     // Bind file input change listener for prediction dataset
     document.getElementById('prediction-file').addEventListener('change', () => this.onPredictionFileSelected());
@@ -195,6 +196,7 @@ class BiasDetectionApp {
     // Toggle model-specific controls and prediction section
     const detectionType = document.getElementById('detection-type').value;
     const predictionSection = document.getElementById('prediction-upload-section');
+    const modelInputModeGroup = document.getElementById('model-input-mode-group');
     const modelTypeGroup = document.getElementById('model-type-group');
     const datasetMitigationControls = document.getElementById('dataset-mitigation-controls');
     const modelMitigationControls = document.getElementById('model-mitigation-controls');
@@ -203,15 +205,16 @@ class BiasDetectionApp {
     const mitigateBtn = document.getElementById('mitigate-btn');
 
     if (detectionType === 'Model Bias Detection') {
-      predictionSection.classList.add('hidden');
-      modelTypeGroup.style.display = 'block';
+      modelInputModeGroup.style.display = 'block';
       datasetMitigationControls.style.display = 'none';
       modelMitigationControls.style.display = 'block';
       mitigateBtn.textContent = 'Run Model Comparison';
       suggestionBox.classList.add('hidden');
       repairGroup.style.display = 'none';
+      this.onModelInputModeChange();
     } else {
       predictionSection.classList.add('hidden');
+      modelInputModeGroup.style.display = 'none';
       modelTypeGroup.style.display = 'none';
       datasetMitigationControls.style.display = 'block';
       modelMitigationControls.style.display = 'none';
@@ -220,6 +223,27 @@ class BiasDetectionApp {
       this.predictionData = null;
       this.predictionColumns = [];
       document.getElementById('prediction-info').classList.add('hidden');
+    }
+  }
+
+  onModelInputModeChange() {
+    const detectionType = document.getElementById('detection-type').value;
+    const mode = document.getElementById('model-input-mode').value;
+    const predictionSection = document.getElementById('prediction-upload-section');
+    const modelTypeGroup = document.getElementById('model-type-group');
+
+    if (detectionType !== 'Model Bias Detection') {
+      predictionSection.classList.add('hidden');
+      modelTypeGroup.style.display = 'none';
+      return;
+    }
+
+    if (mode === 'upload_pred_dataset') {
+      predictionSection.classList.remove('hidden');
+      modelTypeGroup.style.display = 'none';
+    } else {
+      predictionSection.classList.add('hidden');
+      modelTypeGroup.style.display = 'block';
     }
   }
 
@@ -318,6 +342,13 @@ class BiasDetectionApp {
       metricsToShow = this.metrics.classification_metrics || {};
     }
 
+    // Keep accuracy out of detection-panel metric choices (used only in model comparison views).
+    if (detectionType === 'Model Bias Detection') {
+      metricsToShow = Object.fromEntries(
+        Object.entries(metricsToShow).filter(([key]) => key !== 'accuracy')
+      );
+    }
+
     // Create checkbox for each metric
     Object.entries(metricsToShow).forEach(([key, info]) => {
       const metricItem = document.createElement('div');
@@ -381,6 +412,7 @@ class BiasDetectionApp {
     const privVal = document.getElementById('priv-val').value;
     const unprivVal = document.getElementById('unpriv-val').value;
     const modelType = document.getElementById('model-type').value;
+    const modelInputMode = document.getElementById('model-input-mode').value;
 
     // Get selected metrics
     const selectedMetrics = [];
@@ -413,12 +445,16 @@ class BiasDetectionApp {
       selected_metrics: selectedMetrics,
     };
 
-    if (detectionType === 'Model Bias Detection') {
+    if (detectionType === 'Model Bias Detection' && modelInputMode === 'train_model') {
       payload.model_type = modelType;
     }
 
-    // Optional manual prediction dataset path (kept for backward compatibility)
-    if (detectionType === 'Model Bias Detection' && this.predictionData) {
+    if (detectionType === 'Model Bias Detection' && modelInputMode === 'upload_pred_dataset') {
+      if (!this.predictionData) {
+        Utils.showError('Please upload a prediction dataset for Model Bias Detection.');
+        return;
+      }
+
       payload.dataset_pred = this.predictionData;
 
       const idCol = document.getElementById('id-col').value;
@@ -426,8 +462,13 @@ class BiasDetectionApp {
       const predProbaCol = document.getElementById('pred-proba-col').value;
       const probaThreshold = parseFloat(document.getElementById('proba-threshold').value);
 
+      if (!predLabelCol) {
+        Utils.showError('Please select the predicted label column.');
+        return;
+      }
+
       if (idCol) payload.id_column = idCol;
-      if (predLabelCol) payload.pred_label_col = predLabelCol;
+      payload.pred_label_col = predLabelCol;
       if (predProbaCol) payload.pred_proba_col = predProbaCol;
       payload.proba_threshold = probaThreshold;
     }

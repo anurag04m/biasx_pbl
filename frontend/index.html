@@ -44,9 +44,9 @@
       </div>
     </div>
 
-    <!-- Upload Prediction Dataset Section (for Model Bias Detection) -->
+    <!-- Upload Prediction Dataset Section (for Model Bias Detection - Upload mode) -->
     <div id="prediction-upload-section" class="section hidden">
-      <h2>1b. Upload Prediction Dataset (Required for Model Bias Detection)</h2>
+      <h2>1b. Upload Prediction Dataset (Model Bias Detection)</h2>
       <p class="muted">
         Upload a CSV file containing model predictions. This file should include:
         <br>• Same rows as the original dataset (or an ID column to match)
@@ -109,9 +109,18 @@
             </select>
           </div>
         </div>
+        <div class="col" id="model-input-mode-group" style="display:none;">
+          <div class="form-group">
+            <label for="model-input-mode">Model Bias Input Mode:</label>
+            <select id="model-input-mode">
+              <option value="upload_pred_dataset">Use Uploaded Prediction Dataset</option>
+              <option value="train_model">Train and Evaluate One of 4 Models</option>
+            </select>
+          </div>
+        </div>
         <div class="col" id="model-type-group" style="display:none;">
           <div class="form-group">
-            <label for="model-type">Model Type:</label>
+            <label for="model-type">Train-on Model Type:</label>
             <select id="model-type">
               <option value="logistic_regression">Logistic Regression (No Fairness)</option>
               <option value="prejudice_remover">Prejudice Remover (with LR baseline)</option>
