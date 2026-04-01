@@ -21,6 +21,80 @@ const Visualization = {
     this.createComparisonChart('viz-mitigation-comparison', originalResults.metrics, mitigatedResults.metrics, metricsDef);
   },
 
+  renderModelComparison(elementId, allModelResults, metricsDef, metricKeys) {
+    const container = document.getElementById(elementId);
+    container.innerHTML = '';
+
+    if (!allModelResults || Object.keys(allModelResults).length === 0) {
+      container.innerHTML = '<p class="muted">No model comparison data available.</p>';
+      return;
+    }
+
+    const pairs = [
+      {
+        title: 'Logistic Regression vs Prejudice Remover',
+        subtitle: 'Shows effect of fairness regularization',
+        left: 'logistic_regression',
+        right: 'prejudice_remover',
+      },
+      {
+        title: 'Neural Network vs Adversarial Debiasing',
+        subtitle: 'Shows effect of adversarial fairness',
+        left: 'neural_network',
+        right: 'adversarial_debiasing',
+      },
+    ];
+
+    pairs.forEach(pair => {
+      const leftMetrics = allModelResults[pair.left]?.metrics;
+      const rightMetrics = allModelResults[pair.right]?.metrics;
+      if (!leftMetrics || !rightMetrics) return;
+
+      const section = document.createElement('div');
+      section.style.marginBottom = '20px';
+
+      const title = document.createElement('h5');
+      title.textContent = `🔹 ${pair.title}`;
+      section.appendChild(title);
+
+      const subtitle = document.createElement('p');
+      subtitle.className = 'muted';
+      subtitle.textContent = `→ ${pair.subtitle}`;
+      section.appendChild(subtitle);
+
+      const table = document.createElement('table');
+      table.style.width = '100%';
+      table.style.borderCollapse = 'collapse';
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th style="text-align:left; border-bottom:1px solid #ddd; padding:8px;">Metric</th>
+            <th style="text-align:left; border-bottom:1px solid #ddd; padding:8px;">${pair.left}</th>
+            <th style="text-align:left; border-bottom:1px solid #ddd; padding:8px;">${pair.right}</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      `;
+
+      const tbody = table.querySelector('tbody');
+      metricKeys.forEach(key => {
+        const label = metricsDef[key]?.name || key;
+        const leftVal = leftMetrics[key]?.value;
+        const rightVal = rightMetrics[key]?.value;
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td style="border-bottom:1px solid #f0f0f0; padding:8px;">${label}</td>
+          <td style="border-bottom:1px solid #f0f0f0; padding:8px;">${typeof leftVal === 'number' ? leftVal.toFixed(4) : 'N/A'}</td>
+          <td style="border-bottom:1px solid #f0f0f0; padding:8px;">${typeof rightVal === 'number' ? rightVal.toFixed(4) : 'N/A'}</td>
+        `;
+        tbody.appendChild(row);
+      });
+
+      section.appendChild(table);
+      container.appendChild(section);
+    });
+  },
+
   /**
    * Group Distribution Chart (Bar)
    */

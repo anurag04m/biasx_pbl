@@ -109,6 +109,17 @@
             </select>
           </div>
         </div>
+        <div class="col" id="model-type-group" style="display:none;">
+          <div class="form-group">
+            <label for="model-type">Model Type:</label>
+            <select id="model-type">
+              <option value="logistic_regression">Logistic Regression (No Fairness)</option>
+              <option value="prejudice_remover">Prejudice Remover (with LR baseline)</option>
+              <option value="neural_network">Neural Network (No Fairness)</option>
+              <option value="adversarial_debiasing">Adversarial Debiasing (with NN baseline)</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <div class="row">
@@ -169,6 +180,11 @@
 
           <div id="viz-metric-comparison" style="margin-top: 20px;"></div>
 
+          <div id="model-comparison-section" class="hidden" style="margin-top: 20px;">
+            <h4>Model Fairness Comparison</h4>
+            <div id="viz-model-comparison"></div>
+          </div>
+
           <h4 style="margin-top: 30px;">Detailed Metrics</h4>
           <div id="viz-detailed-metrics" class="metrics-grid"></div>
         </div>
@@ -184,13 +200,15 @@
     <div id="mitigation-section" class="section hidden">
       <h2>3. Apply Mitigation</h2>
 
-      <div class="form-group">
-        <label for="mitigation-method">Mitigation Method:</label>
-        <select id="mitigation-method">
-          <option value="reweighing">Reweighing</option>
-          <option value="disparate_impact_remover">Disparate Impact Remover</option>
-          <option value="optimized_preprocessing">Optimized Preprocessing</option>
-        </select>
+      <div id="dataset-mitigation-controls">
+        <div class="form-group">
+          <label for="mitigation-method">Mitigation Method:</label>
+          <select id="mitigation-method">
+            <option value="reweighing">Reweighing</option>
+            <option value="disparate_impact_remover">Disparate Impact Remover</option>
+            <option value="optimized_preprocessing">Optimized Preprocessing</option>
+          </select>
+        </div>
       </div>
 
       <div class="form-group" id="repair-level-group" style="display:none;">
@@ -199,15 +217,31 @@
         <p class="muted">Range: 0.0 to 1.0 (1.0 = full repair)</p>
       </div>
 
+      <div id="model-mitigation-controls" style="display:none;">
+        <p class="muted">
+          Model mitigation uses the uploaded original dataset and trains models internally for comparison.
+        </p>
+        <div class="form-group">
+          <label for="mitigation-model-type">Mitigation Model Type:</label>
+          <select id="mitigation-model-type">
+            <option value="prejudice_remover">Logistic Regression vs Prejudice Remover</option>
+            <option value="adversarial_debiasing">Neural Network vs Adversarial Debiasing</option>
+            <option value="logistic_regression">Logistic Regression (baseline only)</option>
+            <option value="neural_network">Neural Network (baseline only)</option>
+          </select>
+        </div>
+      </div>
+
       <button id="mitigate-btn">Apply Mitigation</button>
       <button id="clear-btn" class="secondary">Clear Results</button>
-      <button id="model-mitigate-btn" class="secondary">Mitigate Model (Frontend Only)</button>
+      <button id="model-mitigate-btn" class="secondary" style="display:none;">Run Model Comparison</button>
 
       <!-- Mitigation Results -->
       <div id="mitigation-results" class="hidden">
         <h3>Mitigation Results</h3>
         <div class="result-box">
           <div id="viz-mitigation-comparison"></div>
+          <div id="viz-model-mitigation-comparison" style="margin-top: 20px;"></div>
 
           <div style="margin-top: 20px;">
             <h4>Raw Results (JSON)</h4>

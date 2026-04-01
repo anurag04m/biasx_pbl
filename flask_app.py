@@ -2,14 +2,14 @@
 Flask backend for the Bias Detection Tool.
 Provides endpoints for dataset upload, analysis, mitigation and download.
 """
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import pandas as pd
 import io
 import uuid
-import json
 from bias_calculator import BiasDetector
 from metrics_info import DATASET_METRICS, CLASSIFICATION_METRICS
+from ml_pipeline import run_model_pipeline, SUPPORTED_MODEL_TYPES
 
 app = Flask(__name__)
 # Keep CORS but also add explicit headers and logging for OPTIONS
@@ -30,7 +30,8 @@ def get_metrics():
     """Return available metrics metadata for the frontend to render checkboxes."""
     return jsonify({
         'dataset_metrics': DATASET_METRICS,
-        'classification_metrics': CLASSIFICATION_METRICS
+        'classification_metrics': CLASSIFICATION_METRICS,
+        'model_types': sorted(list(SUPPORTED_MODEL_TYPES))
     })
 
 @app.route('/upload_dataset', methods=['POST'])
@@ -110,8 +111,11 @@ def analyze():
     unprivileged_value = payload['unprivileged_value']
     selected_metrics = payload['selected_metrics']
     detection_type = payload.get('detection_type', 'Dataset Bias Detection')
+    model_type = payload.get('model_type', None)
 
     print(f"[ANALYZE] Config: protected_attr={protected_attr}, label={label_column}, privileged_value={privileged_value}, unprivileged_value={unprivileged_value}, metrics={selected_metrics}, type={detection_type}")
+    if model_type:
+        print(f"[ANALYZE] Model pipeline requested. model_type={model_type}")
 
     # Optional dataset_pred (CSV string) for model bias detection
     dataset_pred = None
@@ -130,23 +134,51 @@ def analyze():
             return jsonify({'error': f'Failed to parse dataset_pred CSV: {e}'}), 400
 
     # Instantiate detector and calculate metrics
+    comparison_table = None
+    all_model_results = None
+    selected_model = None
     try:
-        detector = BiasDetector(
-            dataset=df,
-            protected_attr=protected_attr,
-            label_column=label_column,
-            privileged_value=privileged_value,
-            unprivileged_value=unprivileged_value,
-            dataset_pred=dataset_pred,
-            detection_type=detection_type,
-            id_column=id_column,
-            pred_label_col=pred_label_col,
-            pred_proba_col=pred_proba_col,
-            proba_threshold=float(proba_threshold) if proba_threshold else 0.5
+        use_model_pipeline = (
+            detection_type == 'Model Bias Detection' and
+            isinstance(model_type, str) and
+            model_type.strip().lower() in SUPPORTED_MODEL_TYPES
         )
-        print("[ANALYZE] BiasDetector instantiated successfully")
-        results = detector.calculate_metrics(selected_metrics)
-        print(f"[ANALYZE] Metrics calculated: {list(results.get('metrics', {}).keys())}")
+
+        if use_model_pipeline:
+            pipeline_out = run_model_pipeline(
+                df=df,
+                config={
+                    'protected_attr': protected_attr,
+                    'label_column': label_column,
+                    'privileged_value': privileged_value,
+                    'unprivileged_value': unprivileged_value,
+                    'selected_metrics': selected_metrics,
+                    **payload,
+                },
+                model_type=model_type
+            )
+            selected_model = pipeline_out.get('primary_model')
+            results = pipeline_out.get('results', {})
+            comparison_table = pipeline_out.get('comparison_table')
+            all_model_results = pipeline_out.get('all_model_results')
+            print(f"[ANALYZE] Model pipeline completed for model_type={selected_model}")
+        else:
+            detector = BiasDetector(
+                dataset=df,
+                protected_attr=protected_attr,
+                label_column=label_column,
+                privileged_value=privileged_value,
+                unprivileged_value=unprivileged_value,
+                dataset_pred=dataset_pred,
+                detection_type=detection_type,
+                id_column=id_column,
+                pred_label_col=pred_label_col,
+                pred_proba_col=pred_proba_col,
+                proba_threshold=float(proba_threshold) if proba_threshold else 0.5
+            )
+            print("[ANALYZE] BiasDetector instantiated successfully")
+            results = detector.calculate_metrics(selected_metrics)
+            print(f"[ANALYZE] Metrics calculated: {list(results.get('metrics', {}).keys())}")
     except Exception as e:
         import traceback
         print(f"[ANALYZE] ERROR during analysis: {str(e)}")
@@ -159,12 +191,19 @@ def analyze():
         'label_column': label_column,
         'privileged_value': privileged_value,
         'unprivileged_value': unprivileged_value,
-        'detection_type': detection_type
+        'detection_type': detection_type,
+        'model_type': selected_model or model_type
     }
     SESSIONS[sid]['last_results'] = results
 
     print(f"[ANALYZE] Success! Returning results for session {sid}")
-    return jsonify({'session_id': sid, 'results': results})
+    return jsonify({
+        'session_id': sid,
+        'results': results,
+        'selected_model': selected_model,
+        'comparison_table': comparison_table,
+        'all_model_results': all_model_results,
+    })
 
 @app.route('/mitigate', methods=['POST'])
 def mitigate():

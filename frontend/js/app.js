@@ -9,6 +9,15 @@ class BiasDetectionApp {
     this.metrics = null;
     this.predictionData = null; // Store prediction dataset CSV text
     this.predictionColumns = [];
+    this.lastAnalyzeResponse = null;
+    this.lastAnalysisConfig = null;
+    this.modelComparisonMetrics = [
+      'accuracy',
+      'selection_rate_difference',
+      'equal_opportunity_difference',
+      'average_odds_difference',
+      'false_positive_rate_difference',
+    ];
     this.init();
   }
 
@@ -19,7 +28,6 @@ class BiasDetectionApp {
     document.getElementById('analyze-btn').addEventListener('click', () => this.runAnalysis());
     document.getElementById('mitigate-btn').addEventListener('click', () => this.runMitigation());
     document.getElementById('clear-btn').addEventListener('click', () => this.clearResults());
-    document.getElementById('model-mitigate-btn').addEventListener('click', () => this.modelMitigation());
 
     // Bind change listeners for dropdowns
     document.getElementById('protected-attr').addEventListener('change', () => this.onProtectedAttrChange());
@@ -44,6 +52,7 @@ class BiasDetectionApp {
 
     // Load metrics from backend
     await this.loadMetrics();
+    this.onDetectionTypeChange();
   }
 
   async loadMetrics() {
@@ -183,14 +192,30 @@ class BiasDetectionApp {
     // Re-populate metrics when detection type changes
     this.populateMetrics();
 
-    // Show/hide prediction upload section based on detection type
+    // Toggle model-specific controls and prediction section
     const detectionType = document.getElementById('detection-type').value;
     const predictionSection = document.getElementById('prediction-upload-section');
+    const modelTypeGroup = document.getElementById('model-type-group');
+    const datasetMitigationControls = document.getElementById('dataset-mitigation-controls');
+    const modelMitigationControls = document.getElementById('model-mitigation-controls');
+    const suggestionBox = document.getElementById('suggestion-box');
+    const repairGroup = document.getElementById('repair-level-group');
+    const mitigateBtn = document.getElementById('mitigate-btn');
 
     if (detectionType === 'Model Bias Detection') {
-      predictionSection.classList.remove('hidden');
+      predictionSection.classList.add('hidden');
+      modelTypeGroup.style.display = 'block';
+      datasetMitigationControls.style.display = 'none';
+      modelMitigationControls.style.display = 'block';
+      mitigateBtn.textContent = 'Run Model Comparison';
+      suggestionBox.classList.add('hidden');
+      repairGroup.style.display = 'none';
     } else {
       predictionSection.classList.add('hidden');
+      modelTypeGroup.style.display = 'none';
+      datasetMitigationControls.style.display = 'block';
+      modelMitigationControls.style.display = 'none';
+      mitigateBtn.textContent = 'Apply Mitigation';
       // Clear prediction data when switching back to dataset detection
       this.predictionData = null;
       this.predictionColumns = [];
@@ -355,6 +380,7 @@ class BiasDetectionApp {
     const labelCol = document.getElementById('label-col').value;
     const privVal = document.getElementById('priv-val').value;
     const unprivVal = document.getElementById('unpriv-val').value;
+    const modelType = document.getElementById('model-type').value;
 
     // Get selected metrics
     const selectedMetrics = [];
@@ -377,20 +403,6 @@ class BiasDetectionApp {
       return;
     }
 
-    // Check if prediction dataset is required and uploaded
-    if (detectionType === 'Model Bias Detection') {
-      if (!this.predictionData) {
-        Utils.showError('Please upload a prediction dataset for Model Bias Detection');
-        return;
-      }
-
-      const predLabelCol = document.getElementById('pred-label-col').value;
-      if (!predLabelCol) {
-        Utils.showError('Please select the predicted label column');
-        return;
-      }
-    }
-
     const payload = {
       session_id: this.sessionId,
       detection_type: detectionType,
@@ -401,7 +413,11 @@ class BiasDetectionApp {
       selected_metrics: selectedMetrics,
     };
 
-    // Add prediction dataset and related parameters if Model Bias Detection
+    if (detectionType === 'Model Bias Detection') {
+      payload.model_type = modelType;
+    }
+
+    // Optional manual prediction dataset path (kept for backward compatibility)
     if (detectionType === 'Model Bias Detection' && this.predictionData) {
       payload.dataset_pred = this.predictionData;
 
@@ -423,7 +439,17 @@ class BiasDetectionApp {
       const response = await API.analyze(payload);
 
       this.analysisResult = response.results;
-      this.displayAnalysisResults();
+      this.lastAnalyzeResponse = response;
+      this.lastAnalysisConfig = {
+        detection_type: detectionType,
+        protected_attr: protectedAttr,
+        label_column: labelCol,
+        privileged_value: privVal,
+        unprivileged_value: unprivVal,
+        selected_metrics: selectedMetrics,
+        model_type: modelType,
+      };
+      this.displayAnalysisResults(response);
 
       Utils.showSuccess('Analysis completed!');
     } catch (error) {
@@ -433,7 +459,7 @@ class BiasDetectionApp {
     }
   }
 
-  displayAnalysisResults() {
+  displayAnalysisResults(response = null) {
     const container = document.getElementById('analysis-results');
     container.classList.remove('hidden');
 
@@ -454,16 +480,32 @@ class BiasDetectionApp {
 
     Visualization.renderAnalysisVisualizations(this.analysisResult, metricsDef);
 
+    const modelComparisonSection = document.getElementById('model-comparison-section');
+    if (detectionType === 'Model Bias Detection' && response && response.all_model_results) {
+      modelComparisonSection.classList.remove('hidden');
+      Visualization.renderModelComparison(
+        'viz-model-comparison',
+        response.all_model_results,
+        this.metrics.classification_metrics || {},
+        this.modelComparisonMetrics
+      );
+    } else {
+      modelComparisonSection.classList.add('hidden');
+      document.getElementById('viz-model-comparison').innerHTML = '';
+    }
+
     // Display suggestion
-    const suggestion = Utils.computeSuggestion(this.analysisResult);
-    if (suggestion) {
-      const suggestionHtml = `
-        <strong>Suggested Mitigation Level:</strong> ${suggestion.level}<br>
-        <strong>Recommended Methods:</strong> ${suggestion.methods.join(', ')}<br>
-        <strong>Reason:</strong> ${suggestion.reason}
-      `;
-      document.getElementById('suggestion-text').innerHTML = suggestionHtml;
-      document.getElementById('suggestion-box').classList.remove('hidden');
+    if (detectionType === 'Dataset Bias Detection') {
+      const suggestion = Utils.computeSuggestion(this.analysisResult);
+      if (suggestion) {
+        const suggestionHtml = `
+          <strong>Suggested Mitigation Level:</strong> ${suggestion.level}<br>
+          <strong>Recommended Methods:</strong> ${suggestion.methods.join(', ')}<br>
+          <strong>Reason:</strong> ${suggestion.reason}
+        `;
+        document.getElementById('suggestion-text').innerHTML = suggestionHtml;
+        document.getElementById('suggestion-box').classList.remove('hidden');
+      }
     }
   }
 
@@ -473,46 +515,76 @@ class BiasDetectionApp {
       return;
     }
 
-    const method = document.getElementById('mitigation-method').value;
-    const payload = {
-      session_id: this.sessionId,
-      method: method,
-      kwargs: {},
-    };
-
-    // Add repair_level for disparate_impact_remover
-    if (method === 'disparate_impact_remover') {
-      payload.kwargs.repair_level = parseFloat(document.getElementById('repair-level').value);
-    }
-
-    console.log('Mitigation payload:', payload);
+    const detectionType = document.getElementById('detection-type').value;
 
     try {
       this.setLoading(true);
-      const response = await API.mitigate(payload);
+      if (detectionType === 'Model Bias Detection') {
+        if (!this.lastAnalysisConfig) {
+          Utils.showError('Run analysis once before model mitigation.');
+          return;
+        }
 
-      // Display mitigation results
-      document.getElementById('mitigation-results').classList.remove('hidden');
-      // Display mitigation results
-      document.getElementById('mitigation-results').classList.remove('hidden');
-      document.getElementById('mitigation-json').textContent = JSON.stringify(response.new_results, null, 2);
+        const modelType = document.getElementById('mitigation-model-type').value;
+        const payload = {
+          session_id: this.sessionId,
+          detection_type: 'Model Bias Detection',
+          protected_attr: this.lastAnalysisConfig.protected_attr,
+          label_column: this.lastAnalysisConfig.label_column,
+          privileged_value: this.lastAnalysisConfig.privileged_value,
+          unprivileged_value: this.lastAnalysisConfig.unprivileged_value,
+          model_type: modelType,
+          selected_metrics: this.modelComparisonMetrics,
+        };
 
-      // Render Mitigation Comparison
-      // Use dataset metrics since mitigation currently operates on dataset level
-      const metricsDef = this.metrics.dataset_metrics || {};
+        console.log('Model mitigation payload:', payload);
+        const response = await API.analyze(payload);
 
-      if (this.analysisResult) {
-        Visualization.renderMitigationComparison(this.analysisResult, response.new_results, metricsDef);
+        document.getElementById('mitigation-results').classList.remove('hidden');
+        document.getElementById('mitigation-json').textContent = JSON.stringify(response, null, 2);
+        document.getElementById('download-section').classList.add('hidden');
+        document.getElementById('viz-mitigation-comparison').innerHTML = '';
+
+        Visualization.renderModelComparison(
+          'viz-model-mitigation-comparison',
+          response.all_model_results || {},
+          this.metrics.classification_metrics || {},
+          this.modelComparisonMetrics
+        );
+
+        Utils.showSuccess('Model mitigation comparison completed.');
+      } else {
+        const method = document.getElementById('mitigation-method').value;
+        const payload = {
+          session_id: this.sessionId,
+          method: method,
+          kwargs: {},
+        };
+
+        if (method === 'disparate_impact_remover') {
+          payload.kwargs.repair_level = parseFloat(document.getElementById('repair-level').value);
+        }
+
+        console.log('Dataset mitigation payload:', payload);
+        const response = await API.mitigate(payload);
+
+        document.getElementById('mitigation-results').classList.remove('hidden');
+        document.getElementById('mitigation-json').textContent = JSON.stringify(response.new_results, null, 2);
+        document.getElementById('viz-model-mitigation-comparison').innerHTML = '';
+
+        const metricsDef = this.metrics.dataset_metrics || {};
+        if (this.analysisResult) {
+          Visualization.renderMitigationComparison(this.analysisResult, response.new_results, metricsDef);
+        }
+
+        if (response.download_endpoint) {
+          const downloadUrl = API.getDownloadUrl(response.download_endpoint);
+          document.getElementById('download-link').href = downloadUrl;
+          document.getElementById('download-section').classList.remove('hidden');
+        }
+
+        Utils.showSuccess('Dataset mitigation applied successfully.');
       }
-
-      // Show download link if available
-      if (response.download_endpoint) {
-        const downloadUrl = API.getDownloadUrl(response.download_endpoint);
-        document.getElementById('download-link').href = downloadUrl;
-        document.getElementById('download-section').classList.remove('hidden');
-      }
-
-      Utils.showSuccess('Mitigation applied successfully! You can now re-run analysis on the mitigated dataset.');
     } catch (error) {
       Utils.showError(error);
     } finally {
@@ -523,12 +595,10 @@ class BiasDetectionApp {
   clearResults() {
     document.getElementById('mitigation-results').classList.add('hidden');
     document.getElementById('download-section').classList.add('hidden');
+    document.getElementById('viz-model-mitigation-comparison').innerHTML = '';
     Utils.showSuccess('Results cleared');
   }
 
-  modelMitigation() {
-    alert('Model mitigation is a frontend-only feature. Backend logic not yet implemented.');
-  }
 
   setLoading(isLoading) {
     const buttons = document.querySelectorAll('button');
