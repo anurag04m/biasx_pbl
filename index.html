@@ -176,6 +176,12 @@
                     <i class="fab fa-python text-green-500 text-3xl mb-4"></i>
                     <h3 class="font-bold mb-4 uppercase text-xs tracking-widest text-green-400">Live Execution</h3>
                     <a href="frontend/index.html" class="px-6 py-2 bg-green-600 rounded-full text-[10px] font-black hover:bg-green-500 transition shadow-lg shadow-green-900/40">VIEW CODE / DEMO</a>
+                    <!-- Minimal "Copy link" button placed below VIEW CODE / DEMO -->
+                    <button id="copyLinkBtn" onclick="copyNgrokLink()" aria-label="Copy ngrok link"
+                            title="Copy ngrok link and open"
+                            style="display:block;margin:8px auto 0;background:transparent;border:none;padding:4px 6px;color:rgba(203,213,225,0.6);font-size:11px;cursor:pointer;outline:none;">
+                        Copy link
+                    </button>
                 </div>
             </div>
         </section>
@@ -378,6 +384,47 @@
             }
         }
     });
+</script>
+
+<script>
+    // Copy ngrok link and open it in a new tab. Minimal UI feedback.
+    function copyNgrokLink() {
+        const link = 'https://a882-115-248-83-147.ngrok-free.app';
+        const btn = document.getElementById('copyLinkBtn');
+        const prevText = btn ? btn.innerText : '';
+
+        function openAndFeedback() {
+
+            if (btn) {
+                btn.innerText = 'Copied!';
+                setTimeout(() => { btn.innerText = prevText; }, 2000);
+            }
+        }
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(link).then(() => {
+                openAndFeedback();
+            }).catch((err) => {
+                // Fallback: open anyway and inform user
+                openAndFeedback();
+            });
+        } else {
+            // Fallback method for older browsers
+            const ta = document.createElement('textarea');
+            ta.value = link;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+            } catch (e) {
+                // ignore
+            }
+            document.body.removeChild(ta);
+            openAndFeedback();
+        }
+    }
 </script>
 
 
