@@ -42,6 +42,15 @@ DATASET_METRICS = {
 }
 
 CLASSIFICATION_METRICS = {
+    'accuracy': {
+        'name': 'Accuracy',
+        'description': 'Overall classification accuracy. Utility metric used to show fairness-utility tradeoff.',
+        'formula': '(TP + TN) / (TP + TN + FP + FN)',
+        'ideal_value': 'Higher is better (1.0 ideal)',
+        'interpretation': 'Not a fairness-difference metric by itself; use with fairness metrics for trade-off analysis.',
+        'threshold': {'min': 0.0, 'max': 1.0},
+        'type': 'classification'
+    },
     'selection_rate_difference': {
         'name': 'Selection Rate Difference (Statistical Parity Difference)',
         'description': 'Difference in predicted positive (selection) rates between groups. Also known as Statistical Parity Difference (SPD) for predictions.',
